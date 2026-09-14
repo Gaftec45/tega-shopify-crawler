@@ -515,7 +515,6 @@ const crawlHomepage = async (
 
 browser = await chromium.launch({
   headless: true,
-  executablePath: chromium.executablePath(),
 });
 
 console.log("Browser launched successfully");
