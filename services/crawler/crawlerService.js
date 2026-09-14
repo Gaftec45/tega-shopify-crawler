@@ -8,7 +8,7 @@ const MAX_PRODUCTS = 3;
 
 const MAX_CRAWL_TIME = 180000; // 3 minutes
 
-const PRODUCT_CONCURRENCY = 3;
+const PRODUCT_CONCURRENCY = 1;
 
 // Initial navigation only needs the document to commit.
 // DOMContentLoaded/networkidle are handled separately.
