@@ -647,9 +647,9 @@ console.log("Browser launched successfully");
 
                     async (productUrl) => {
 
-                        console.log(
-                            `Crawling product: ${productUrl}`
-                        );
+                        // console.log(
+                        //     `Crawling product: ${productUrl}`
+                        // );
 
 
                         return await crawlProductPage(

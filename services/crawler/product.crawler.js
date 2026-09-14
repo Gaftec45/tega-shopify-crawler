@@ -450,8 +450,7 @@ const getShopifyProductData =
                                         );
 
 
-                                const productUrl =
-                                    `${pathname}.js`;
+                                const productUrl = `${window.location.origin}${pathname}.js`;
 
 
                                 const controller =
@@ -1539,22 +1538,22 @@ const navigateProductSafely =
            NETWORK IDLE
         ===================================================== */
 
-        try {
+        // try {
 
-            await page.waitForLoadState(
-                "networkidle",
-                {
-                    timeout:
-                        NETWORK_IDLE_TIMEOUT
-                }
-            );
+        //     await page.waitForLoadState(
+        //         "networkidle",
+        //         {
+        //             timeout:
+        //                 NETWORK_IDLE_TIMEOUT
+        //         }
+        //     );
 
-        } catch {
+        // } catch {
 
-            console.log(
-                `Product network idle timeout: ${productUrl}`
-            );
-        }
+        //     console.log(
+        //         `Product network idle timeout: ${productUrl}`
+        //     );
+        // }
 
 
         await sleep(
