@@ -22,9 +22,6 @@ const SETTLE_DELAY = 700;
 
 const MAX_HTML_SIZE = 5 * 1024 * 1024;
 
-console.log("Playwright executable:", chromium.executablePath());
-console.log("Playwright version:", require("playwright/package.json").version);
-
 
 /* =========================================================
    HELPERS
@@ -512,13 +509,16 @@ const crawlHomepage = async (
             `Launching browser for: ${storeUrl}`
         );
 
+console.log("Playwright version:", require("playwright/package.json").version);
+console.log("PLAYWRIGHT_BROWSERS_PATH:", process.env.PLAYWRIGHT_BROWSERS_PATH);
+console.log("Launching Chromium...");
 
-browser = await chromium.launch({
-  headless: true,
-});
+        browser = await chromium.launch({
+            channel: "chromium",
+            headless: true
+        });
 
 console.log("Browser launched successfully");
-
 
         context =
             await browser.newContext({
