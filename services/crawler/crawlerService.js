@@ -22,6 +22,9 @@ const SETTLE_DELAY = 700;
 
 const MAX_HTML_SIZE = 5 * 1024 * 1024;
 
+console.log("Playwright executable:", chromium.executablePath());
+console.log("Playwright version:", require("playwright/package.json").version);
+
 
 /* =========================================================
    HELPERS
