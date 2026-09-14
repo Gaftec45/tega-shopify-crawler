@@ -1,22 +1,38 @@
 require("dotenv").config();
+
 const express = require("express");
 const cors = require("cors");
 
 const connectDB = require("./config/db");
 const PORT = process.env.PORT || 5001;
 
-
 const healthRoutes = require("./routes/healthRoutes");
 const crawlerRoutes = require("./routes/crawler.routes");
 const productCrawlerRoutes = require("./routes/product.crawler.routes");
 const auditRoutes = require("./routes/audit.routes");
 
-
 const app = express();
 
+
+// ========================================
+// PROCESS START DIAGNOSTIC
+// ========================================
+
+console.log(
+    `SERVER PROCESS STARTED | PID: ${process.pid} | ${new Date().toISOString()}`
+);
+
+
+// ========================================
+// EXPRESS
+// ========================================
+
 app.use(cors({
-  origin: ['http://localhost:3000', 'https://tega-scout.vercel.app'],
-  methods: ['GET','POST','DELETE','PUT'],
+    origin: [
+        "http://localhost:3000",
+        "https://tega-scout.vercel.app"
+    ],
+    methods: ["GET", "POST", "DELETE", "PUT"],
 }));
 
 app.use(express.json());
@@ -24,6 +40,11 @@ app.use(express.json());
 app.use(express.urlencoded({
     extended: true
 }));
+
+
+// ========================================
+// ROUTES
+// ========================================
 
 app.use("/api/health", healthRoutes);
 
@@ -33,12 +54,22 @@ app.use("/api/crawler/product", productCrawlerRoutes);
 
 app.use("/api/audits", auditRoutes);
 
+
+// ========================================
+// 404
+// ========================================
+
 app.use((req, res) => {
     res.status(404).json({
         success: false,
         message: "Route not found"
     });
 });
+
+
+// ========================================
+// ERROR HANDLER
+// ========================================
 
 app.use((err, req, res, next) => {
     console.error(err);
@@ -50,17 +81,37 @@ app.use((err, req, res, next) => {
 });
 
 
+// ========================================
+// START SERVER
+// ========================================
 
 const startServer = async () => {
+
     try {
+
         await connectDB();
 
         app.listen(PORT, () => {
-            console.log(`AI Shopify Auditor running on port ${PORT}`);
+
+            console.log(
+                `AI Shopify Auditor running on port ${PORT}`
+            );
+
+            console.log(
+                `Process PID: ${process.pid}`
+            );
+
         });
+
     } catch (error) {
-        console.error("Failed to start server:");
-        console.error(error.message);
+
+        console.error(
+            "Failed to start server:"
+        );
+
+        console.error(
+            error.message
+        );
 
         process.exit(1);
     }
