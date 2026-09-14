@@ -510,10 +510,10 @@ const crawlHomepage = async (
         );
 
 
-        browser =
-            await chromium.launch({
-                headless: true
-            });
+        browser = await chromium.launch({
+            channel: "chromium",
+            headless: true
+        });
 
 
         context =
