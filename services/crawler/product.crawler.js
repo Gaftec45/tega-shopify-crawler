@@ -450,7 +450,8 @@ const getShopifyProductData =
                                         );
 
 
-                                const productUrl = `${window.location.origin}${pathname}.js`;
+                                const productUrl =
+                                    `${window.location.origin}${pathname}.js`;
 
 
                                 const controller =
@@ -474,6 +475,11 @@ const getShopifyProductData =
                                                 credentials:
                                                     "same-origin",
 
+                                                headers: {
+                                                    Accept:
+                                                        "application/json, text/javascript, */*; q=0.01"
+                                                },
+
                                                 signal:
                                                     controller.signal
                                             }
@@ -491,6 +497,7 @@ const getShopifyProductData =
                                             reason:
                                                 "http_error"
                                         };
+
                                     }
 
 
@@ -500,24 +507,66 @@ const getShopifyProductData =
                                         ) || "";
 
 
-                                    if (
-                                        !contentType.includes(
-                                            "json"
-                                        )
-                                    ) {
+                                    /*
+                                     * Do not reject the response
+                                     * based on Content-Type.
+                                     *
+                                     * Shopify can return valid JSON
+                                     * from a .js endpoint with:
+                                     *
+                                     * text/javascript
+                                     */
+
+                                    const text =
+                                        await response.text();
+
+
+                                    if (!text) {
 
                                         return {
                                             success: false,
                                             status:
                                                 response.status,
+                                            contentType,
                                             reason:
-                                                "non_json_response"
+                                                "empty_response"
                                         };
+
                                     }
 
 
-                                    const data =
-                                        await response.json();
+                                    let data;
+
+
+                                    try {
+
+                                        data =
+                                            JSON.parse(
+                                                text
+                                            );
+
+                                    } catch {
+
+                                        return {
+                                            success: false,
+                                            status:
+                                                response.status,
+                                            contentType,
+                                            preview:
+                                                text
+                                                    .slice(
+                                                        0,
+                                                        300
+                                                    )
+                                                    .replace(
+                                                        /\s+/g,
+                                                        " "
+                                                    ),
+                                            reason:
+                                                "invalid_json_body"
+                                        };
+
+                                    }
 
 
                                     if (
@@ -530,14 +579,19 @@ const getShopifyProductData =
                                             success: false,
                                             status:
                                                 response.status,
+                                            contentType,
                                             reason:
                                                 "invalid_json"
                                         };
+
                                     }
 
 
                                     return {
                                         success: true,
+                                        status:
+                                            response.status,
+                                        contentType,
                                         data
                                     };
 
@@ -546,6 +600,7 @@ const getShopifyProductData =
                                     clearTimeout(
                                         timeout
                                     );
+
                                 }
 
                             } catch (error) {
@@ -558,7 +613,9 @@ const getShopifyProductData =
                                             ? "timeout"
                                             : "network_error"
                                 };
+
                             }
+
                         }
                     );
 
@@ -569,10 +626,11 @@ const getShopifyProductData =
                 ) {
 
                     console.log(
-                        "Shopify browser JSON succeeded"
+                        `Shopify browser JSON succeeded: HTTP ${result.status}, ${result.contentType}`
                     );
 
                     return result.data;
+
                 }
 
 
@@ -589,14 +647,56 @@ const getShopifyProductData =
 
 
                 /*
-                 * A 404 means the endpoint does not
-                 * exist. Retrying it is pointless.
+                 * Log a small preview only when
+                 * the server returned something
+                 * that was not actually JSON.
                  */
 
                 if (
-                    result?.status === 404
+                    result?.preview
                 ) {
+
+                    console.warn(
+                        `Shopify response preview: ${result.preview}`
+                    );
+
+                }
+
+
+                /*
+                 * These responses will not improve
+                 * by retrying.
+                 */
+
+                if (
+                    result?.status === 404 ||
+                    result?.reason ===
+                        "invalid_json_body" ||
+                    result?.reason ===
+                        "empty_response" ||
+                    result?.reason ===
+                        "invalid_json"
+                ) {
+
                     return null;
+
+                }
+
+
+                /*
+                 * Retry only potentially
+                 * temporary failures.
+                 */
+
+                if (
+                    attempt <
+                    MAX_SHOPIFY_JSON_ATTEMPTS
+                ) {
+
+                    await sleep(
+                        RETRY_DELAY
+                    );
+
                 }
 
             } catch (error) {
@@ -604,22 +704,26 @@ const getShopifyProductData =
                 console.warn(
                     `Shopify browser JSON error: ${error.message}`
                 );
+
+
+                if (
+                    attempt <
+                    MAX_SHOPIFY_JSON_ATTEMPTS
+                ) {
+
+                    await sleep(
+                        RETRY_DELAY
+                    );
+
+                }
+
             }
 
-
-            if (
-                attempt <
-                MAX_SHOPIFY_JSON_ATTEMPTS
-            ) {
-
-                await sleep(
-                    RETRY_DELAY
-                );
-            }
         }
 
 
         return null;
+
     };
 
 
@@ -635,14 +739,18 @@ const getShopifyProductDataDirect =
 
         let parsed;
 
+
         try {
 
             parsed =
-                new URL(productUrl);
+                new URL(
+                    productUrl
+                );
 
         } catch {
 
             return null;
+
         }
 
 
@@ -688,7 +796,12 @@ const getShopifyProductDataDirect =
                                 SHOPIFY_JSON_TIMEOUT,
 
                             failOnStatusCode:
-                                false
+                                false,
+
+                            headers: {
+                                Accept:
+                                    "application/json, text/javascript, */*; q=0.01"
+                            }
                         }
                     );
 
@@ -718,8 +831,7 @@ const getShopifyProductDataDirect =
 
 
                 /*
-                 * Product does not exist.
-                 * Do not waste another request.
+                 * Product endpoint does not exist.
                  */
 
                 if (
@@ -731,12 +843,13 @@ const getShopifyProductDataDirect =
                     );
 
                     return null;
+
                 }
 
 
                 /*
-                 * Rate limiting or temporary
-                 * server failure can be retried.
+                 * Retry temporary server/rate-limit
+                 * failures only.
                  */
 
                 if (
@@ -748,6 +861,7 @@ const getShopifyProductDataDirect =
                         `Temporary Shopify JSON HTTP error ${status}`
                     );
 
+
                     if (
                         attempt <
                         MAX_SHOPIFY_JSON_ATTEMPTS
@@ -758,76 +872,139 @@ const getShopifyProductDataDirect =
                         );
 
                         continue;
+
                     }
 
+
                     return null;
+
                 }
 
 
-                if (!response.ok()) {
+                if (
+                    !response.ok()
+                ) {
 
                     console.warn(
                         `Shopify JSON fallback returned HTTP ${status}: ${productUrl}`
                     );
 
                     return null;
+
                 }
 
 
-                if (
-                    !contentType.includes(
-                        "json"
-                    )
-                ) {
+                /*
+                 * IMPORTANT:
+                 *
+                 * Do not reject text/javascript.
+                 *
+                 * Read the body and determine whether
+                 * it is JSON by actually parsing it.
+                 */
+
+                const text =
+                    await response.text();
+
+
+                if (!text) {
 
                     console.warn(
-                        `Shopify JSON fallback returned non-JSON content: ${productUrl}`
+                        `Shopify JSON fallback returned an empty body: ${productUrl}`
                     );
 
-                    /*
-                     * This is normally a theme,
-                     * bot protection, redirect,
-                     * or server response issue.
-                     *
-                     * Retry once because it can be
-                     * transient.
-                     */
-
-                    if (
-                        attempt <
-                        MAX_SHOPIFY_JSON_ATTEMPTS
-                    ) {
-
-                        await sleep(
-                            RETRY_DELAY
-                        );
-
-                        continue;
-                    }
-
                     return null;
+
                 }
 
 
-                const data =
-                    await response.json();
+                let data;
+
+
+                try {
+
+                    data =
+                        JSON.parse(
+                            text
+                        );
+
+                } catch {
+
+                    const preview =
+                        text
+                            .slice(
+                                0,
+                                500
+                            )
+                            .replace(
+                                /\s+/g,
+                                " "
+                            );
+
+
+                    console.warn(
+                        `Shopify JSON fallback body is not valid JSON: ${productUrl}`
+                    );
+
+
+                    console.warn(
+                        `Shopify response preview: ${preview}`
+                    );
+
+
+                    /*
+                     * HTTP 200 with an invalid JSON body
+                     * is usually a deterministic response,
+                     * not a temporary network failure.
+                     *
+                     * Do not make another identical request.
+                     */
+
+                    return null;
+
+                }
 
 
                 if (
                     !data ||
-                    typeof data !== "object"
+                    typeof data !==
+                        "object"
                 ) {
 
                     console.warn(
-                        `Shopify JSON returned invalid data: ${productUrl}`
+                        `Shopify JSON returned invalid parsed data: ${productUrl}`
                     );
 
                     return null;
+
+                }
+
+
+                /*
+                 * Basic product sanity check.
+                 * This prevents unrelated JSON responses
+                 * from being treated as product data.
+                 */
+
+                if (
+                    !data.title &&
+                    !data.id &&
+                    !Array.isArray(
+                        data.variants
+                    )
+                ) {
+
+                    console.warn(
+                        `Shopify JSON response does not look like product data: ${productUrl}`
+                    );
+
+                    return null;
+
                 }
 
 
                 console.log(
-                    `Shopify JSON fallback succeeded: ${productUrl}`
+                    `Shopify JSON fallback succeeded: ${productUrl} (${contentType})`
                 );
 
 
@@ -854,12 +1031,16 @@ const getShopifyProductDataDirect =
                     await sleep(
                         RETRY_DELAY
                     );
+
                 }
+
             }
+
         }
 
 
         return null;
+
     };
 
 
