@@ -618,7 +618,7 @@ const createPublicReport = async (req, res) => {
 
 // ========================================
 // GET PUBLIC REPORT
-// GET /api/public-reports/:token
+// GET /api/public/:token
 // NO AUTHENTICATION
 // ========================================
 

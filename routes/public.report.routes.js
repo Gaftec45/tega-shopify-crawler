@@ -9,12 +9,10 @@ const {
 
 // ========================================
 // GET PUBLIC AUDIT REPORT
-// GET /api/public-reports/:token
+// GET /api/public/:token
 // ========================================
 
-router.get(
-    "/:token",
-    getPublicReport
+router.get("/public/:token", getPublicReport
 );
 
 

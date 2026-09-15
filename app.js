@@ -55,7 +55,7 @@ app.use("/api/crawler/product", productCrawlerRoutes);
 
 app.use("/api/audits", auditRoutes);
 
-app.use("/api/public-reports", publicReportRoutes);
+app.use("/api/audits", publicReportRoutes);
 
 
 // ========================================
