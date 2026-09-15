@@ -87,7 +87,26 @@ productsFound: {
         error: {
             type: String,
             default: null
-        }
+        },
+
+        publicReport: {
+    enabled: {
+        type: Boolean,
+        default: false
+    },
+
+    token: {
+        type: String,
+        unique: true,
+        sparse: true,
+        index: true
+    },
+
+    createdAt: {
+        type: Date,
+        default: null
+    }
+},
     },
     {
         timestamps: true

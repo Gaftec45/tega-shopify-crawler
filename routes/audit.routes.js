@@ -5,10 +5,12 @@ const router = express.Router();
 const auth = require("../middleware/auth.middleware");
 
 const {
-  getAuditById,
-  getAuditReport,
-  analyzeAudit,
-  getUserAudits,
+    getAuditById,
+    getAuditReport,
+    analyzeAudit,
+    getUserAudits,
+    createPublicReport,
+    revokePublicReport
 } = require("../controllers/audit.controller");
 
 const {
@@ -54,6 +56,22 @@ router.post("/:id/analyze", auth, analyzeAudit);
 // ========================================
 
 router.get("/:id/report", auth, getAuditReport);
+
+// ========================================
+// CREATE PUBLIC REPORT
+// POST /api/audits/:id/share
+// ========================================
+
+router.post("/:id/share", auth, createPublicReport
+);
+
+
+// ========================================
+// REVOKE PUBLIC REPORT
+// DELETE /api/audits/:id/share
+// ========================================
+
+router.delete("/:id/share", auth, revokePublicReport);
 
 
 module.exports = router;

@@ -10,6 +10,7 @@ const healthRoutes = require("./routes/healthRoutes");
 const crawlerRoutes = require("./routes/crawler.routes");
 const productCrawlerRoutes = require("./routes/product.crawler.routes");
 const auditRoutes = require("./routes/audit.routes");
+const publicReportRoutes = require("./routes/public.report.routes");
 
 const app = express();
 
@@ -53,6 +54,8 @@ app.use("/api/crawler", crawlerRoutes);
 app.use("/api/crawler/product", productCrawlerRoutes);
 
 app.use("/api/audits", auditRoutes);
+
+app.use("/api/public-reports", publicReportRoutes);
 
 
 // ========================================

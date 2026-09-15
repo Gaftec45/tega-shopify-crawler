@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const crypto = require("crypto");
 const Audit = require("../models/audit.model");
 
 
@@ -516,9 +517,256 @@ const analyzeAudit = async (req, res) => {
     }
 };
 
+// ========================================
+// GENERATE PUBLIC REPORT
+// POST /api/audits/:id/share
+// ========================================
+
+const createPublicReport = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid audit ID"
+            });
+        }
+
+        const audit = await Audit.findOne({
+            _id: id,
+            user: req.user.id
+        });
+
+        if (!audit) {
+            return res.status(404).json({
+                success: false,
+                message: "Audit not found"
+            });
+        }
+
+        // Only completed audits can be shared
+        if (
+            audit.status !== "completed" ||
+            !audit.aiAudit
+        ) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Only completed audits can be shared"
+            });
+        }
+
+        // Reuse existing public link
+        if (
+            audit.publicReport?.enabled &&
+            audit.publicReport?.token
+        ) {
+            return res.status(200).json({
+                success: true,
+                message: "Public report already exists",
+                data: {
+                    token:
+                        audit.publicReport.token,
+                    enabled:
+                        audit.publicReport.enabled,
+                    createdAt:
+                        audit.publicReport.createdAt
+                }
+            });
+        }
+
+        // Generate secure random token
+        const token =
+            crypto.randomBytes(16).toString("hex");
+
+        audit.publicReport = {
+            enabled: true,
+            token,
+            createdAt: new Date()
+        };
+
+        await audit.save();
+
+        return res.status(201).json({
+            success: true,
+            message:
+                "Public report created successfully",
+            data: {
+                token,
+                enabled: true,
+                createdAt:
+                    audit.publicReport.createdAt
+            }
+        });
+
+    } catch (error) {
+        console.error(
+            "Create public report error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Failed to create public report",
+            error: error.message
+        });
+    }
+};
+
+
+// ========================================
+// GET PUBLIC REPORT
+// GET /api/public-reports/:token
+// NO AUTHENTICATION
+// ========================================
+
+const getPublicReport = async (req, res) => {
+    try {
+        const { token } = req.params;
+
+        if (
+            !token ||
+            typeof token !== "string" ||
+            token.length < 20
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid public report token"
+            });
+        }
+
+        const audit = await Audit.findOne({
+            "publicReport.token": token,
+            "publicReport.enabled": true,
+            status: "completed"
+        }).select(
+            "storeUrl requestedUrl finalUrl storeName status score aiAudit createdAt updatedAt publicReport"
+        );
+
+        if (!audit) {
+            return res.status(404).json({
+                success: false,
+                message:
+                    "Public report not found or no longer available"
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+
+            data: {
+                id: audit._id,
+
+                storeUrl:
+                    audit.storeUrl,
+
+                requestedUrl:
+                    audit.requestedUrl,
+
+                finalUrl:
+                    audit.finalUrl,
+
+                storeName:
+                    audit.storeName,
+
+                status:
+                    audit.status,
+
+                score:
+                    audit.score,
+
+                aiAudit:
+                    audit.aiAudit,
+
+                createdAt:
+                    audit.createdAt,
+
+                updatedAt:
+                    audit.updatedAt,
+
+                sharedAt:
+                    audit.publicReport.createdAt
+            }
+        });
+
+    } catch (error) {
+        console.error(
+            "Get public report error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Failed to retrieve public report",
+            error: error.message
+        });
+    }
+};
+
+
+// ========================================
+// REVOKE PUBLIC REPORT
+// DELETE /api/audits/:id/share
+// ========================================
+
+const revokePublicReport = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid audit ID"
+            });
+        }
+
+        const audit = await Audit.findOne({
+            _id: id,
+            user: req.user.id
+        });
+
+        if (!audit) {
+            return res.status(404).json({
+                success: false,
+                message: "Audit not found"
+            });
+        }
+
+        audit.publicReport.enabled =
+            false;
+
+        await audit.save();
+
+        return res.status(200).json({
+            success: true,
+            message:
+                "Public report link revoked"
+        });
+
+    } catch (error) {
+        console.error(
+            "Revoke public report error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Failed to revoke public report",
+            error: error.message
+        });
+    }
+};
+
 module.exports = {
     getAuditById,
     getAuditReport,
     analyzeAudit,
-    getUserAudits
+    getUserAudits,
+    createPublicReport,
+    getPublicReport,
+    revokePublicReport
 };
