@@ -10,8 +10,6 @@ const MAX_CRAWL_TIME = 180000; // 3 minutes
 
 const PRODUCT_CONCURRENCY = 1;
 
-// Initial navigation only needs the document to commit.
-// DOMContentLoaded/networkidle are handled separately.
 const HOMEPAGE_NAVIGATION_TIMEOUT = 30000;
 
 const DOM_CONTENT_LOADED_TIMEOUT = 10000;
@@ -32,7 +30,9 @@ const sleep = (ms) =>
 
 
 const normalizeHostname = (hostname) =>
-    hostname.replace(/^www\./, "").toLowerCase();
+    hostname
+        .replace(/^www\./, "")
+        .toLowerCase();
 
 
 const isHttpUrl = (url) => {
@@ -49,15 +49,26 @@ const isHttpUrl = (url) => {
 };
 
 
-const isSameStoreUrl = (candidateUrl, storeUrl) => {
+const isSameStoreUrl = (
+    candidateUrl,
+    storeUrl
+) => {
     try {
-        const candidate = new URL(candidateUrl);
-        const store = new URL(storeUrl);
+        const candidate =
+            new URL(candidateUrl);
+
+        const store =
+            new URL(storeUrl);
 
         return (
-            normalizeHostname(candidate.hostname) ===
-            normalizeHostname(store.hostname)
+            normalizeHostname(
+                candidate.hostname
+            ) ===
+            normalizeHostname(
+                store.hostname
+            )
         );
+
     } catch {
         return false;
     }
@@ -66,11 +77,15 @@ const isSameStoreUrl = (candidateUrl, storeUrl) => {
 
 const normalizeUrl = (url) => {
     try {
-        const parsed = new URL(url);
+        const parsed =
+            new URL(url);
 
         parsed.hash = "";
 
-        return parsed.toString().replace(/\/$/, "");
+        return parsed
+            .toString()
+            .replace(/\/$/, "");
+
     } catch {
         return null;
     }
@@ -78,15 +93,23 @@ const normalizeUrl = (url) => {
 
 
 const uniqueUrls = (urls = []) => {
+
     const seen = new Set();
+
     const result = [];
 
     for (const url of urls) {
-        const normalized = normalizeUrl(url);
 
-        if (!normalized) continue;
+        const normalized =
+            normalizeUrl(url);
 
-        if (seen.has(normalized)) continue;
+        if (!normalized) {
+            continue;
+        }
+
+        if (seen.has(normalized)) {
+            continue;
+        }
 
         seen.add(normalized);
 
@@ -98,6 +121,50 @@ const uniqueUrls = (urls = []) => {
 
 
 /* =========================================================
+   SAFE PROGRESS REPORTER
+========================================================= */
+
+/*
+ * Progress reporting must NEVER break
+ * the actual crawl.
+ *
+ * If MongoDB or another progress operation
+ * fails, crawling continues normally.
+ */
+
+const reportProgress = async (
+    onProgress,
+    progress,
+    currentStep,
+    message = null
+) => {
+
+    if (
+        typeof onProgress !==
+        "function"
+    ) {
+        return;
+    }
+
+    try {
+
+        await onProgress(
+            progress,
+            currentStep,
+            message
+        );
+
+    } catch (error) {
+
+        console.error(
+            "Progress update failed:",
+            error.message
+        );
+    }
+};
+
+
+/* =========================================================
    CONCURRENCY
 ========================================================= */
 
@@ -105,26 +172,42 @@ const runWithConcurrency = async (
     items,
     concurrency,
     worker,
-    deadline
+    deadline,
+    onItemComplete
 ) => {
-    const results = new Array(items.length);
+
+    const results =
+        new Array(items.length);
 
     let nextIndex = 0;
 
+
     const runWorker = async () => {
+
         while (true) {
 
-            if (Date.now() >= deadline) {
+            // Stop starting new work after deadline.
+            if (
+                Date.now() >= deadline
+            ) {
                 return;
             }
 
-            const index = nextIndex++;
 
-            if (index >= items.length) {
+            const index =
+                nextIndex++;
+
+
+            if (
+                index >= items.length
+            ) {
                 return;
             }
 
-            const item = items[index];
+
+            const item =
+                items[index];
+
 
             try {
 
@@ -139,16 +222,44 @@ const runWithConcurrency = async (
                     url: item
                 };
             }
+
+
+            /*
+             * Report completed item.
+             */
+
+            if (
+                typeof onItemComplete ===
+                "function"
+            ) {
+
+                try {
+
+                    await onItemComplete(
+                        index,
+                        item,
+                        results[index]
+                    );
+
+                } catch (error) {
+
+                    console.error(
+                        "Item progress callback failed:",
+                        error.message
+                    );
+                }
+            }
         }
     };
 
 
     const workers = [];
 
-    const workerCount = Math.min(
-        concurrency,
-        items.length
-    );
+    const workerCount =
+        Math.min(
+            concurrency,
+            items.length
+        );
 
 
     for (
@@ -156,11 +267,17 @@ const runWithConcurrency = async (
         i < workerCount;
         i++
     ) {
-        workers.push(runWorker());
+
+        workers.push(
+            runWorker()
+        );
     }
 
 
-    await Promise.all(workers);
+    await Promise.all(
+        workers
+    );
+
 
     return results;
 };
@@ -189,8 +306,13 @@ const setupHomepageProtection = async (
                 request.url();
 
 
-            // Only allow HTTP/HTTPS
-            if (!isHttpUrl(url)) {
+            /*
+             * Only allow HTTP/HTTPS.
+             */
+
+            if (
+                !isHttpUrl(url)
+            ) {
 
                 await route.abort();
 
@@ -198,8 +320,11 @@ const setupHomepageProtection = async (
             }
 
 
-            // Fonts and media are unnecessary
-            // for HTML auditing.
+            /*
+             * Fonts and media are unnecessary
+             * for the audit.
+             */
+
             if (
                 type === "font" ||
                 type === "media"
@@ -211,8 +336,11 @@ const setupHomepageProtection = async (
             }
 
 
-            // Prevent top-level navigation
-            // from leaving the store.
+            /*
+             * Prevent the homepage from
+             * navigating to another domain.
+             */
+
             if (
                 type === "document" &&
                 !isSameStoreUrl(
@@ -232,6 +360,11 @@ const setupHomepageProtection = async (
     );
 
 
+    /*
+     * Log meaningful failed requests while
+     * ignoring common third-party services.
+     */
+
     page.on(
         "requestfailed",
         (request) => {
@@ -240,17 +373,31 @@ const setupHomepageProtection = async (
                 request.url();
 
 
-            // Ignore noisy third-party
-            // analytics/tracking requests.
             if (
-                url.includes("google-analytics") ||
-                url.includes("googletagmanager") ||
-                url.includes("facebook") ||
-                url.includes("doubleclick") ||
-                url.includes("clarity") ||
-                url.includes("shopifysvc.com") ||
-                url.includes("klaviyo.com") ||
-                url.includes("shop.app")
+                url.includes(
+                    "google-analytics"
+                ) ||
+                url.includes(
+                    "googletagmanager"
+                ) ||
+                url.includes(
+                    "facebook"
+                ) ||
+                url.includes(
+                    "doubleclick"
+                ) ||
+                url.includes(
+                    "clarity"
+                ) ||
+                url.includes(
+                    "shopifysvc.com"
+                ) ||
+                url.includes(
+                    "klaviyo.com"
+                ) ||
+                url.includes(
+                    "shop.app"
+                )
             ) {
                 return;
             }
@@ -280,27 +427,14 @@ const navigateHomepageSafely = async (
     storeUrl
 ) => {
 
-    let navigationTimedOut = false;
+    let navigationTimedOut =
+        false;
 
 
     console.log(
         `Opening homepage: ${storeUrl}`
     );
 
-
-    /*
-     * IMPORTANT:
-     *
-     * Do NOT wait for DOMContentLoaded
-     * inside page.goto().
-     *
-     * Shopify stores can keep scripts,
-     * payment widgets, analytics and
-     * third-party resources running.
-     *
-     * "commit" means the document navigation
-     * has actually started successfully.
-     */
 
     try {
 
@@ -320,7 +454,8 @@ const navigateHomepageSafely = async (
             "TimeoutError"
         ) {
 
-            navigationTimedOut = true;
+            navigationTimedOut =
+                true;
 
             console.log(
                 "Homepage navigation timeout — checking whether page committed..."
@@ -334,8 +469,8 @@ const navigateHomepageSafely = async (
 
 
     /*
-     * Give the browser a short moment
-     * to establish the document.
+     * Give Shopify/JavaScript a moment
+     * to render the initial page.
      */
 
     await sleep(1500);
@@ -345,14 +480,10 @@ const navigateHomepageSafely = async (
         page.url();
 
 
-    /*
-     * about:blank means the document
-     * never actually committed.
-     */
-
     if (
         !currentUrl ||
-        currentUrl === "about:blank"
+        currentUrl ===
+            "about:blank"
     ) {
 
         throw new Error(
@@ -362,8 +493,8 @@ const navigateHomepageSafely = async (
 
 
     /*
-     * Verify that the final page
-     * is still inside the target store.
+     * Do not allow redirects outside
+     * the store domain.
      */
 
     if (
@@ -385,8 +516,7 @@ const navigateHomepageSafely = async (
 
 
     /*
-     * DOMContentLoaded is useful,
-     * but NOT required for success.
+     * DOM content.
      */
 
     try {
@@ -408,11 +538,7 @@ const navigateHomepageSafely = async (
 
 
     /*
-     * networkidle is also optional.
-     *
-     * Shopify stores frequently never
-     * become completely idle because of
-     * analytics/payment/marketing scripts.
+     * Network idle.
      */
 
     try {
@@ -437,10 +563,6 @@ const navigateHomepageSafely = async (
         SETTLE_DELAY
     );
 
-
-    /*
-     * Get the actual HTML.
-     */
 
     const html =
         await page.content();
@@ -488,15 +610,17 @@ const navigateHomepageSafely = async (
 ========================================================= */
 
 const crawlHomepage = async (
-    storeUrl
+    storeUrl,
+    onProgress
 ) => {
 
     let browser;
+
     let context;
+
 
     const startedAt =
         Date.now();
-
 
     const deadline =
         startedAt +
@@ -505,20 +629,53 @@ const crawlHomepage = async (
 
     try {
 
+        /* ================================================
+           START
+        ================================================= */
+
+        await reportProgress(
+            onProgress,
+            10,
+            "crawling_homepage",
+            "Opening Shopify store..."
+        );
+
+
         console.log(
             `Launching browser for: ${storeUrl}`
         );
 
-console.log("Playwright version:", require("playwright/package.json").version);
-console.log("PLAYWRIGHT_BROWSERS_PATH:", process.env.PLAYWRIGHT_BROWSERS_PATH);
-console.log("Launching Chromium...");
 
-        browser = await chromium.launch({
-            channel: "chromium",
-            headless: true
-        });
+        console.log(
+            "Playwright version:",
+            require(
+                "playwright/package.json"
+            ).version
+        );
 
-console.log("Browser launched successfully");
+
+        console.log(
+            "PLAYWRIGHT_BROWSERS_PATH:",
+            process.env.PLAYWRIGHT_BROWSERS_PATH
+        );
+
+
+        console.log(
+            "Launching Chromium..."
+        );
+
+
+        browser =
+            await chromium.launch({
+                channel: "chromium",
+                headless: true
+            });
+
+
+        console.log(
+            "Browser launched successfully"
+        );
+
 
         context =
             await browser.newContext({
@@ -533,9 +690,9 @@ console.log("Browser launched successfully");
             });
 
 
-        /* =====================================================
+        /* =================================================
            HOMEPAGE
-        ===================================================== */
+        ================================================= */
 
         const page =
             await context.newPage();
@@ -547,6 +704,14 @@ console.log("Browser launched successfully");
         );
 
 
+        await reportProgress(
+            onProgress,
+            12,
+            "crawling_homepage",
+            "Connecting to your store..."
+        );
+
+
         const homepageNavigation =
             await navigateHomepageSafely(
                 page,
@@ -554,17 +719,32 @@ console.log("Browser launched successfully");
             );
 
 
+        await reportProgress(
+            onProgress,
+            18,
+            "homepage_loaded",
+            "Homepage loaded successfully."
+        );
+
+
         const finalUrl =
             homepageNavigation.finalUrl;
-
 
         const html =
             homepageNavigation.html;
 
 
-        /* =====================================================
+        /* =================================================
            EXTRACT HOMEPAGE DATA
-        ===================================================== */
+        ================================================= */
+
+        await reportProgress(
+            onProgress,
+            20,
+            "extracting_store_data",
+            "Extracting store information..."
+        );
+
 
         const homepageData =
             extractPageData(
@@ -573,28 +753,47 @@ console.log("Browser launched successfully");
             );
 
 
-        /* =====================================================
+        await reportProgress(
+            onProgress,
+            23,
+            "extracting_store_data",
+            "Store information extracted."
+        );
+
+
+        /* =================================================
            CLASSIFY LINKS
-        ===================================================== */
+        ================================================= */
+
+        await reportProgress(
+            onProgress,
+            25,
+            "discovering_products",
+            "Finding products and important store pages..."
+        );
+
 
         const classified =
             classifyLinks(
-                homepageData.links?.items || [],
+                homepageData.links?.items ||
+                    [],
                 storeUrl
             );
 
 
-        /* =====================================================
+        /* =================================================
            PRODUCT URLS
-        ===================================================== */
+        ================================================= */
 
         const productUrls =
             uniqueUrls(
-                (classified.products || [])
-                    .map(
-                        (product) =>
-                            product.href
-                    )
+                (
+                    classified.products ||
+                    []
+                ).map(
+                    (product) =>
+                        product.href
+                )
             )
                 .filter(
                     (url) =>
@@ -614,16 +813,26 @@ console.log("Browser launched successfully");
         );
 
 
-        /* =====================================================
+        await reportProgress(
+            onProgress,
+            28,
+            "products_discovered",
+            productUrls.length > 0
+                ? `Found ${productUrls.length} product page${productUrls.length > 1 ? "s" : ""} to analyze.`
+                : "No product pages were found to crawl."
+        );
+
+
+        /* =================================================
            CLOSE HOMEPAGE
-        ===================================================== */
+        ================================================= */
 
         await page.close();
 
 
-        /* =====================================================
+        /* =================================================
            PRODUCT CRAWLING
-        ===================================================== */
+        ================================================= */
 
         let productResults = [];
 
@@ -638,6 +847,21 @@ console.log("Browser launched successfully");
             );
 
 
+            await reportProgress(
+                onProgress,
+                30,
+                "crawling_products",
+                `Crawling ${productUrls.length} product page${productUrls.length > 1 ? "s" : ""}...`
+            );
+
+
+            const PRODUCT_START =
+                30;
+
+            const PRODUCT_END =
+                42;
+
+
             productResults =
                 await runWithConcurrency(
 
@@ -645,12 +869,9 @@ console.log("Browser launched successfully");
 
                     PRODUCT_CONCURRENCY,
 
-                    async (productUrl) => {
-
-                        // console.log(
-                        //     `Crawling product: ${productUrl}`
-                        // );
-
+                    async (
+                        productUrl
+                    ) => {
 
                         return await crawlProductPage(
                             productUrl,
@@ -659,14 +880,77 @@ console.log("Browser launched successfully");
                         );
                     },
 
-                    deadline
+                    deadline,
+
+                    async (
+                        index,
+                        productUrl,
+                        result
+                    ) => {
+
+                        const completed =
+                            index + 1;
+
+                        const total =
+                            productUrls.length;
+
+
+                        const progress =
+                            Math.round(
+                                PRODUCT_START +
+                                (
+                                    completed /
+                                    total
+                                ) *
+                                (
+                                    PRODUCT_END -
+                                    PRODUCT_START
+                                )
+                            );
+
+
+                        const success =
+                            result?.success;
+
+
+                        await reportProgress(
+                            onProgress,
+                            progress,
+                            "crawling_products",
+                            success
+                                ? `Crawled product ${completed} of ${total}.`
+                                : `Product ${completed} of ${total} could not be fully crawled.`
+                        );
+
+
+                        console.log(
+                            `Product ${completed}/${total} completed: ${productUrl}`
+                        );
+                    }
                 );
+
+        } else {
+
+            await reportProgress(
+                onProgress,
+                42,
+                "crawling_products",
+                "No additional product pages to crawl."
+            );
         }
 
 
-        /* =====================================================
+        /* =================================================
            NORMALIZE PRODUCT RESULTS
-        ===================================================== */
+        ================================================= */
+
+        await reportProgress(
+            onProgress,
+            43,
+            "processing_crawl_data",
+            "Processing crawled store data..."
+        );
+
 
         const successfulProducts =
             productResults.filter(
@@ -681,9 +965,21 @@ console.log("Browser launched successfully");
         );
 
 
-        /* =====================================================
+        /* =================================================
+           CRAWL COMPLETE
+        ================================================= */
+
+        await reportProgress(
+            onProgress,
+            45,
+            "crawl_completed",
+            "Store crawl completed successfully."
+        );
+
+
+        /* =================================================
            FINAL RESULT
-        ===================================================== */
+        ================================================= */
 
         return {
 

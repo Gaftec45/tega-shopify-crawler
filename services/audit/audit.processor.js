@@ -16,10 +16,25 @@ const {
 const updateProgress = async (
     auditRecord,
     progress,
-    currentStep
+    currentStep,
+    message = null
 ) => {
-    auditRecord.progress = progress;
-    auditRecord.currentStep = currentStep;
+    auditRecord.progress =
+        Math.min(
+            100,
+            Math.max(
+                0,
+                Number(progress) || 0
+            )
+        );
+
+    auditRecord.currentStep =
+        currentStep;
+
+    if (message !== null) {
+        auditRecord.progressMessage =
+            message;
+    }
 
     await auditRecord.save();
 };
@@ -35,7 +50,9 @@ const processAudit = async (auditId) => {
         await Audit.findById(auditId);
 
     if (!auditRecord) {
-        throw new Error("Audit not found");
+        throw new Error(
+            "Audit not found"
+        );
     }
 
     try {
@@ -52,7 +69,8 @@ const processAudit = async (auditId) => {
         await updateProgress(
             auditRecord,
             5,
-            "starting"
+            "starting",
+            "Preparing your store audit..."
         );
 
 
@@ -63,10 +81,14 @@ const processAudit = async (auditId) => {
         auditRecord.status =
             "crawling";
 
+        await auditRecord.save();
+
+
         await updateProgress(
             auditRecord,
             10,
-            "crawling_homepage"
+            "crawling_homepage",
+            "Opening Shopify store..."
         );
 
 
@@ -75,9 +97,27 @@ const processAudit = async (auditId) => {
         );
 
 
+        // ========================================
+        // CRAWL WEBSITE
+        // ========================================
+
         const crawlResult =
             await crawlHomepage(
-                auditRecord.storeUrl
+                auditRecord.storeUrl,
+
+                async (
+                    progress,
+                    currentStep,
+                    message
+                ) => {
+
+                    await updateProgress(
+                        auditRecord,
+                        progress,
+                        currentStep,
+                        message
+                    );
+                }
             );
 
 
@@ -98,7 +138,7 @@ const processAudit = async (auditId) => {
             crawlResult.data;
 
         auditRecord.finalUrl =
-            crawlResult.data.finalUrl;
+            crawlResult.data.finalUrl || null;
 
         auditRecord.storeName =
             crawlResult.data.storeName ||
@@ -109,14 +149,16 @@ const processAudit = async (auditId) => {
             crawlResult.data.products?.crawled ||
             0;
 
+
         auditRecord.productsFound =
             productsFound;
 
 
         await updateProgress(
             auditRecord,
-            50,
-            "crawl_completed"
+            45,
+            "crawl_completed",
+            "Store crawl completed successfully."
         );
 
 
@@ -136,11 +178,14 @@ const processAudit = async (auditId) => {
         auditRecord.status =
             "analyzing";
 
+        await auditRecord.save();
+
 
         await updateProgress(
             auditRecord,
-            60,
-            "analyzing"
+            50,
+            "analyzing",
+            "Running store analysis..."
         );
 
 
@@ -164,8 +209,9 @@ const processAudit = async (auditId) => {
 
         await updateProgress(
             auditRecord,
-            90,
-            "analysis_completed"
+            68,
+            "analysis_completed",
+            "Store analysis completed."
         );
 
 
@@ -175,27 +221,42 @@ const processAudit = async (auditId) => {
 
 
         // ========================================
-        // CRAWL / ANALYSIS COMPLETE
+        // READY FOR AI
         // ========================================
 
         auditRecord.status =
             "crawled";
 
         auditRecord.progress =
-            100;
+            70;
 
         auditRecord.currentStep =
             "ready_for_ai";
 
+        auditRecord.progressMessage =
+            "Your store audit is ready for AI analysis.";
+
         auditRecord.error =
             null;
 
+
+        /*
+         * IMPORTANT:
+         *
+         * Do NOT set progress to 100 here.
+         *
+         * The AI stage still needs to run.
+         */
 
         await auditRecord.save();
 
 
         console.log(
             `Crawl and deterministic audit completed: ${auditId}`
+        );
+
+        console.log(
+            `Audit ready for AI analysis: ${auditId}`
         );
 
 
@@ -207,11 +268,27 @@ const processAudit = async (auditId) => {
         );
 
 
+        // ========================================
+        // AUDIT FAILED
+        // ========================================
+
         auditRecord.status =
             "failed";
 
+        auditRecord.progress =
+            Math.min(
+                100,
+                Math.max(
+                    0,
+                    Number(auditRecord.progress) || 0
+                )
+            );
+
         auditRecord.currentStep =
             "failed";
+
+        auditRecord.progressMessage =
+            "We couldn't complete the store audit.";
 
         auditRecord.error =
             error.message;

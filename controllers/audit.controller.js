@@ -204,12 +204,20 @@ const analyzeAudit = async (req, res) => {
     try {
         const { id } = req.params;
 
+        // --------------------------------
+        // VALIDATE AUDIT ID
+        // --------------------------------
+
         if (!mongoose.Types.ObjectId.isValid(id)) {
             return res.status(400).json({
                 success: false,
                 message: "Invalid audit ID"
             });
         }
+
+        // --------------------------------
+        // FIND USER'S AUDIT
+        // --------------------------------
 
         const audit = await Audit.findOne({
             _id: id,
@@ -223,8 +231,15 @@ const analyzeAudit = async (req, res) => {
             });
         }
 
-        // Make sure crawling/deterministic analysis is complete
-        if (!audit.crawl || !audit.deterministicAudit) {
+        // --------------------------------
+        // MAKE SURE CRAWL + DETERMINISTIC
+        // ANALYSIS ARE COMPLETE
+        // --------------------------------
+
+        if (
+            !audit.crawl ||
+            !audit.deterministicAudit
+        ) {
             return res.status(400).json({
                 success: false,
                 message:
@@ -232,39 +247,67 @@ const analyzeAudit = async (req, res) => {
             });
         }
 
-        // Prevent duplicate AI processing
+        // --------------------------------
+        // PREVENT DUPLICATE AI PROCESSING
+        // --------------------------------
+
         if (audit.status === "ai_processing") {
             return res.status(409).json({
                 success: false,
-                message: "AI analysis is already in progress"
+                message:
+                    "AI analysis is already in progress"
             });
         }
 
-        // If AI already completed, don't run it again accidentally
+        // --------------------------------
+        // AI ALREADY COMPLETED
+        // --------------------------------
+
         if (
             audit.status === "completed" &&
             audit.aiAudit
         ) {
             return res.status(200).json({
                 success: true,
-                message: "AI analysis already completed",
+                message:
+                    "AI analysis already completed",
                 data: {
                     auditId: audit._id,
                     status: audit.status,
+                    progress: audit.progress,
+                    currentStep: audit.currentStep,
+                    progressMessage:
+                        audit.progressMessage,
+                    score: audit.score,
                     aiAudit: audit.aiAudit
                 }
             });
         }
 
+        // --------------------------------
+        // START AI PROCESSING
+        // --------------------------------
+        //
+        // Deterministic audit should already
+        // be around 70%.
+        //
+
         audit.status = "ai_processing";
-        audit.progress = 10;
-        audit.currentStep = "building_ai_payload";
+
+        audit.progress = 75;
+
+        audit.currentStep =
+            "building_ai_payload";
+
+        audit.progressMessage =
+            "Preparing audit data for AI...";
+
         audit.error = null;
 
         await audit.save();
 
         // --------------------------------
-        // BUILD AI PAYLOAD
+        // LOAD AI SERVICES
         // --------------------------------
 
         const {
@@ -279,6 +322,13 @@ const analyzeAudit = async (req, res) => {
             analyzeWithOpenRouter
         } = require("../services/ai/openrouter.service");
 
+        // --------------------------------
+        // BUILD AI PAYLOAD
+        // --------------------------------
+
+        console.log(
+            `Building AI payload for audit: ${audit._id}`
+        );
 
         const aiPayload =
             buildAiAuditPayload(
@@ -286,16 +336,23 @@ const analyzeAudit = async (req, res) => {
                 audit.deterministicAudit
             );
 
+        audit.progress = 78;
 
-        audit.progress = 30;
-        audit.currentStep = "building_ai_prompt";
+        audit.currentStep =
+            "building_ai_prompt";
+
+        audit.progressMessage =
+            "Preparing AI analysis...";
 
         await audit.save();
 
+        // --------------------------------
+        // BUILD AI PROMPT
+        // --------------------------------
 
-        // --------------------------------
-        // BUILD PROMPT
-        // --------------------------------
+        console.log(
+            `Building AI prompt for audit: ${audit._id}`
+        );
 
         const {
             systemPrompt,
@@ -304,21 +361,23 @@ const analyzeAudit = async (req, res) => {
             aiPayload
         );
 
+        audit.progress = 80;
 
-        audit.progress = 50;
-        audit.currentStep = "ai_processing";
+        audit.currentStep =
+            "ai_processing";
+
+        audit.progressMessage =
+            "AI is analyzing your store...";
 
         await audit.save();
-
-
-        console.log(
-            `Sending audit to OpenRouter: ${audit._id}`
-        );
-
 
         // --------------------------------
         // OPENROUTER
         // --------------------------------
+
+        console.log(
+            `Sending audit to OpenRouter: ${audit._id}`
+        );
 
         const aiAudit =
             await analyzeWithOpenRouter({
@@ -326,13 +385,30 @@ const analyzeAudit = async (req, res) => {
                 userPrompt
             });
 
+        // --------------------------------
+        // AI RESPONSE RECEIVED
+        // --------------------------------
 
-        // --------------------------------
-        // SAVE AI RESULT
-        // --------------------------------
+        console.log(
+            `AI response received for audit: ${audit._id}`
+        );
 
         audit.aiAudit =
             aiAudit;
+
+        audit.progress = 95;
+
+        audit.currentStep =
+            "analysis_completed";
+
+        audit.progressMessage =
+            "AI analysis completed. Preparing your report...";
+
+        await audit.save();
+
+        // --------------------------------
+        // COMPLETE AUDIT
+        // --------------------------------
 
         audit.status =
             "completed";
@@ -343,17 +419,21 @@ const analyzeAudit = async (req, res) => {
         audit.currentStep =
             "completed";
 
+        audit.progressMessage =
+            "Audit completed successfully.";
+
         audit.error =
             null;
 
-
         await audit.save();
-
 
         console.log(
             `AI analysis completed: ${audit._id}`
         );
 
+        // --------------------------------
+        // RESPONSE
+        // --------------------------------
 
         return res.status(200).json({
             success: true,
@@ -364,11 +444,14 @@ const analyzeAudit = async (req, res) => {
             data: {
                 auditId: audit._id,
                 status: audit.status,
+                progress: audit.progress,
+                currentStep: audit.currentStep,
+                progressMessage:
+                    audit.progressMessage,
                 score: audit.score,
                 aiAudit: audit.aiAudit
             }
         });
-
 
     } catch (error) {
 
@@ -377,26 +460,40 @@ const analyzeAudit = async (req, res) => {
             error
         );
 
+        // --------------------------------
+        // AI FAILED
+        // --------------------------------
+        //
+        // Keep the crawl and deterministic
+        // audit. Only reset the AI stage.
+        //
 
-        // Preserve the crawl and deterministic audit.
-        // Only mark the AI stage as failed.
         try {
-
             const { id } = req.params;
 
             if (
                 mongoose.Types.ObjectId.isValid(id)
             ) {
-
-                await Audit.findByIdAndUpdate(
-                    id,
+                await Audit.findOneAndUpdate(
+                    {
+                        _id: id,
+                        user: req.user.id
+                    },
                     {
                         status: "crawled",
-                        currentStep: "ai_failed",
-                        error: error.message
+
+                        progress: 70,
+
+                        currentStep:
+                            "ai_failed",
+
+                        progressMessage:
+                            "AI analysis failed. Your store audit is still available.",
+
+                        error:
+                            error.message
                     }
                 );
-
             }
 
         } catch (saveError) {
@@ -405,9 +502,7 @@ const analyzeAudit = async (req, res) => {
                 "Failed to save AI error:",
                 saveError
             );
-
         }
-
 
         return res.status(500).json({
             success: false,

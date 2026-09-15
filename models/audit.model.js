@@ -74,6 +74,11 @@ currentStep: {
     default: "queued"
 },
 
+progressMessage: {
+    type: String,
+    default: null
+},
+
 productsFound: {
     type: Number,
     default: 0
