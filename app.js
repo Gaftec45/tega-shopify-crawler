@@ -85,6 +85,17 @@ app.use((err, req, res, next) => {
 // START SERVER
 // ========================================
 
+setInterval(() => {
+    const memory = process.memoryUsage();
+
+    console.log("MEMORY USAGE", {
+        rss: `${Math.round(memory.rss / 1024 / 1024)} MB`,
+        heapUsed: `${Math.round(memory.heapUsed / 1024 / 1024)} MB`,
+        heapTotal: `${Math.round(memory.heapTotal / 1024 / 1024)} MB`,
+        external: `${Math.round(memory.external / 1024 / 1024)} MB`
+    });
+}, 10000);
+
 const startServer = async () => {
 
     try {
