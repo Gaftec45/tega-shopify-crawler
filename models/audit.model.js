@@ -7,6 +7,7 @@ const auditSchema = new mongoose.Schema(
             required: true,
             index: true
         },
+
         storeUrl: {
             type: String,
             required: true,
@@ -47,6 +48,54 @@ const auditSchema = new mongoose.Schema(
             default: null
         },
 
+        // ========================================
+        // CONTACT / EMAIL DATA
+        // ========================================
+
+        contact: {
+            emails: {
+                type: [
+                    {
+                        email: {
+                            type: String,
+                            trim: true,
+                            lowercase: true
+                        },
+
+                        type: {
+                            type: String,
+                            trim: true,
+                            default: "other"
+                        },
+
+                        foundOn: {
+                            type: [String],
+                            default: []
+                        }
+                    }
+                ],
+
+                default: []
+            },
+
+            totalEmails: {
+                type: Number,
+                default: 0
+            },
+
+            primaryEmail: {
+                type: String,
+                trim: true,
+                lowercase: true,
+                default: null
+            },
+
+            pagesCrawled: {
+                type: [String],
+                default: []
+            }
+        },
+
         deterministicAudit: {
             type: mongoose.Schema.Types.Mixed,
             default: null
@@ -63,26 +112,26 @@ const auditSchema = new mongoose.Schema(
         },
 
         progress: {
-    type: Number,
-    default: 0,
-    min: 0,
-    max: 100
-},
+            type: Number,
+            default: 0,
+            min: 0,
+            max: 100
+        },
 
-currentStep: {
-    type: String,
-    default: "queued"
-},
+        currentStep: {
+            type: String,
+            default: "queued"
+        },
 
-progressMessage: {
-    type: String,
-    default: null
-},
+        progressMessage: {
+            type: String,
+            default: null
+        },
 
-productsFound: {
-    type: Number,
-    default: 0
-},
+        productsFound: {
+            type: Number,
+            default: 0
+        },
 
         error: {
             type: String,
@@ -90,24 +139,25 @@ productsFound: {
         },
 
         publicReport: {
-    enabled: {
-        type: Boolean,
-        default: false
+            enabled: {
+                type: Boolean,
+                default: false
+            },
+
+            token: {
+                type: String,
+                unique: true,
+                sparse: true,
+                index: true
+            },
+
+            createdAt: {
+                type: Date,
+                default: null
+            }
+        }
     },
 
-    token: {
-        type: String,
-        unique: true,
-        sparse: true,
-        index: true
-    },
-
-    createdAt: {
-        type: Date,
-        default: null
-    }
-},
-    },
     {
         timestamps: true
     }

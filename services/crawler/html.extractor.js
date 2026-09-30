@@ -31,6 +31,99 @@ const extractPageData = (html, pageUrl) => {
         }
     };
 
+    const normalizeUrl = (url) => {
+        if (!url) {
+            return null;
+        }
+
+        try {
+            const resolved = new URL(url, pageUrl);
+
+            if (
+                resolved.protocol !== "http:" &&
+                resolved.protocol !== "https:"
+            ) {
+                return null;
+            }
+
+            resolved.hash = "";
+
+            return resolved.toString();
+        } catch {
+            return null;
+        }
+    };
+
+    const isProductPath = (url) => {
+        if (!url) {
+            return false;
+        }
+
+        try {
+            const parsed = new URL(url, pageUrl);
+
+            const segments = parsed.pathname
+                .toLowerCase()
+                .split("/")
+                .filter(Boolean);
+
+            const productIndex = segments.indexOf("products");
+
+            if (productIndex === -1) {
+                return false;
+            }
+
+            // /products is collection/index page
+            // /en/products is also collection/index page
+            if (!segments[productIndex + 1]) {
+                return false;
+            }
+
+            return true;
+        } catch {
+            return false;
+        }
+    };
+
+    const isSameDomain = (url) => {
+        try {
+            const target = new URL(url, pageUrl);
+            const base = new URL(pageUrl);
+
+            const normalizeHostname = (hostname) =>
+                hostname
+                    .replace(/^www\./i, "")
+                    .toLowerCase();
+
+            return (
+                normalizeHostname(target.hostname) ===
+                normalizeHostname(base.hostname)
+            );
+        } catch {
+            return false;
+        }
+    };
+
+    const isGiftCardUrl = (url) => {
+        if (!url) {
+            return false;
+        }
+
+        try {
+            const pathname = new URL(url, pageUrl)
+                .pathname
+                .toLowerCase();
+
+            return (
+                pathname.includes("/products/gift-card") ||
+                pathname.includes("/products/giftcard") ||
+                pathname.includes("/products/gift_card")
+            );
+        } catch {
+            return false;
+        }
+    };
+
     const findProductSchema = (data) => {
         if (!data) {
             return null;
@@ -56,7 +149,8 @@ const extractPageData = (html, pageUrl) => {
 
         if (
             type === "Product" ||
-            (Array.isArray(type) && type.includes("Product"))
+            (Array.isArray(type) &&
+                type.includes("Product"))
         ) {
             return data;
         }
@@ -68,11 +162,59 @@ const extractPageData = (html, pageUrl) => {
         return null;
     };
 
+    const findOrganizationName = (data) => {
+        if (!data) {
+            return null;
+        }
+
+        if (Array.isArray(data)) {
+            for (const item of data) {
+                const name =
+                    findOrganizationName(item);
+
+                if (name) {
+                    return name;
+                }
+            }
+
+            return null;
+        }
+
+        if (typeof data !== "object") {
+            return null;
+        }
+
+        const type = data["@type"];
+
+        if (
+            type === "Organization" ||
+            type === "LocalBusiness" ||
+            (Array.isArray(type) &&
+                (
+                    type.includes("Organization") ||
+                    type.includes("LocalBusiness")
+                ))
+        ) {
+            return cleanText(data.name);
+        }
+
+        if (Array.isArray(data["@graph"])) {
+            return findOrganizationName(
+                data["@graph"]
+            );
+        }
+
+        return null;
+    };
+
     // =========================================================
     // BASIC SEO
     // =========================================================
 
-    const title = $("title").first().text().trim();
+    const title = $("title")
+        .first()
+        .text()
+        .trim();
 
     const metaDescription =
         $('meta[name="description"]')
@@ -90,17 +232,29 @@ const extractPageData = (html, pageUrl) => {
 
     const headings = {
         h1: $("h1")
-            .map((_, element) => $(element).text().trim())
+            .map((_, element) =>
+                $(element)
+                    .text()
+                    .trim()
+            )
             .get()
             .filter(Boolean),
 
         h2: $("h2")
-            .map((_, element) => $(element).text().trim())
+            .map((_, element) =>
+                $(element)
+                    .text()
+                    .trim()
+            )
             .get()
             .filter(Boolean),
 
         h3: $("h3")
-            .map((_, element) => $(element).text().trim())
+            .map((_, element) =>
+                $(element)
+                    .text()
+                    .trim()
+            )
             .get()
             .filter(Boolean)
     };
@@ -115,17 +269,20 @@ const extractPageData = (html, pageUrl) => {
                 $(element).attr("src") ||
                 $(element).attr("data-src") ||
                 $(element).attr("data-original") ||
+                $(element).attr("data-lazy-src") ||
                 null,
 
             alt:
-                $(element).attr("alt")?.trim() ||
-                null
+                $(element)
+                    .attr("alt")
+                    ?.trim() || null
         }))
         .get();
 
-    const imagesWithoutAlt = images.filter(
-        (image) => !image.alt
-    );
+    const imagesWithoutAlt =
+        images.filter(
+            (image) => !image.alt
+        );
 
     // =========================================================
     // LINKS
@@ -133,13 +290,214 @@ const extractPageData = (html, pageUrl) => {
 
     const links = $("a[href]")
         .map((_, element) => ({
-            text: $(element).text().trim(),
+            text:
+                $(element)
+                    .text()
+                    .replace(/\s+/g, " ")
+                    .trim(),
 
             href:
                 $(element).attr("href") ||
                 null
         }))
         .get();
+
+    // =========================================================
+    // PRODUCT URL DISCOVERY
+    //
+    // Handles:
+    // /products/product-name
+    // /en/products/product-name
+    // /de/products/product-name
+    // /fr/products/product-name
+    // /en-US/products/product-name
+    // =========================================================
+
+    const discoveredProductUrls = [];
+    const productUrlSet = new Set();
+
+    const addProductUrl = (
+        rawUrl,
+        source = "unknown"
+    ) => {
+        if (!rawUrl) {
+            return;
+        }
+
+        const normalizedUrl =
+            normalizeUrl(rawUrl);
+
+        if (!normalizedUrl) {
+            return;
+        }
+
+        if (!isSameDomain(normalizedUrl)) {
+            return;
+        }
+
+        if (!isProductPath(normalizedUrl)) {
+            return;
+        }
+
+        if (isGiftCardUrl(normalizedUrl)) {
+            return;
+        }
+
+        if (
+            productUrlSet.has(
+                normalizedUrl
+            )
+        ) {
+            return;
+        }
+
+        productUrlSet.add(normalizedUrl);
+
+        discoveredProductUrls.push({
+            url: normalizedUrl,
+            source
+        });
+    };
+
+    // ---------------------------------------------------------
+    // Product URLs from anchors
+    // ---------------------------------------------------------
+
+    for (const link of links) {
+        addProductUrl(
+            link.href,
+            "anchor"
+        );
+    }
+
+    // ---------------------------------------------------------
+    // Product URLs from canonical URL
+    // ---------------------------------------------------------
+
+    if (canonical) {
+        addProductUrl(
+            canonical,
+            "canonical"
+        );
+    }
+
+    // ---------------------------------------------------------
+    // Product URLs from structured data
+    // ---------------------------------------------------------
+
+    // This is useful for product pages and stores that expose
+    // product URLs through JSON-LD.
+    //
+    // We recursively search structured data for:
+    // - url
+    // - @id
+    // - item
+    // - mainEntityOfPage
+    // ---------------------------------------------------------
+
+    const collectProductUrlsFromJson = (
+        data,
+        source = "structured_data"
+    ) => {
+        if (!data) {
+            return;
+        }
+
+        if (Array.isArray(data)) {
+            for (const item of data) {
+                collectProductUrlsFromJson(
+                    item,
+                    source
+                );
+            }
+
+            return;
+        }
+
+        if (
+            typeof data !== "object"
+        ) {
+            return;
+        }
+
+        const type = data["@type"];
+
+        const isProduct =
+            type === "Product" ||
+            (
+                Array.isArray(type) &&
+                type.includes("Product")
+            );
+
+        if (isProduct) {
+            if (data.url) {
+                addProductUrl(
+                    data.url,
+                    source
+                );
+            }
+
+            if (data["@id"]) {
+                addProductUrl(
+                    data["@id"],
+                    source
+                );
+            }
+
+            if (
+                data.mainEntityOfPage
+            ) {
+                if (
+                    typeof data.mainEntityOfPage ===
+                    "string"
+                ) {
+                    addProductUrl(
+                        data.mainEntityOfPage,
+                        source
+                    );
+                }
+
+                if (
+                    typeof data.mainEntityOfPage ===
+                    "object"
+                ) {
+                    addProductUrl(
+                        data.mainEntityOfPage.url,
+                        source
+                    );
+
+                    addProductUrl(
+                        data.mainEntityOfPage["@id"],
+                        source
+                    );
+                }
+            }
+        }
+
+        // Search nested graph
+        if (data["@graph"]) {
+            collectProductUrlsFromJson(
+                data["@graph"],
+                source
+            );
+        }
+
+        // Search item
+        if (data.item) {
+            collectProductUrlsFromJson(
+                data.item,
+                source
+            );
+        }
+
+        // Search mainEntity
+        if (data.mainEntity) {
+            collectProductUrlsFromJson(
+                data.mainEntity,
+                source
+            );
+        }
+    };
 
     // =========================================================
     // FORMS
@@ -167,7 +525,9 @@ const extractPageData = (html, pageUrl) => {
         .map((_, element) => ({
             text:
                 $(element).text().trim() ||
-                $(element).attr("value")?.trim() ||
+                $(element)
+                    .attr("value")
+                    ?.trim() ||
                 null,
 
             type:
@@ -231,79 +591,150 @@ const extractPageData = (html, pageUrl) => {
     const structuredData = $(
         'script[type="application/ld+json"]'
     )
-        .map((_, element) => $(element).html())
+        .map((_, element) =>
+            $(element).html()
+        )
         .get();
 
+    // =========================================================
+    // PARSE STRUCTURED DATA FOR PRODUCT DISCOVERY
+    // =========================================================
 
-        // =========================================================
-// STORE / BRAND NAME
-// =========================================================
+    for (const rawJson of structuredData) {
+        const parsed = parseJson(rawJson);
 
-const openGraphSiteName =
-    cleanText(
-        $('meta[property="og:site_name"]')
-            .attr("content")
-    );
-
-let organizationName = null;
-
-const findOrganizationName = (data) => {
-    if (!data) {
-        return null;
-    }
-
-    if (Array.isArray(data)) {
-        for (const item of data) {
-            const name =
-                findOrganizationName(item);
-
-            if (name) {
-                return name;
-            }
-        }
-
-        return null;
-    }
-
-    if (typeof data !== "object") {
-        return null;
-    }
-
-    const type = data["@type"];
-
-    if (
-        type === "Organization" ||
-        type === "LocalBusiness" ||
-        (
-            Array.isArray(type) &&
-            (
-                type.includes("Organization") ||
-                type.includes("LocalBusiness")
-            )
-        )
-    ) {
-        return cleanText(data.name);
-    }
-
-    if (Array.isArray(data["@graph"])) {
-        return findOrganizationName(
-            data["@graph"]
+        collectProductUrlsFromJson(
+            parsed,
+            "structured_data"
         );
     }
 
-    return null;
-};
+    // =========================================================
+    // STORE / BRAND NAME
+    // =========================================================
 
-for (const rawJson of structuredData) {
-    const parsed = parseJson(rawJson);
+    const openGraphSiteName =
+        cleanText(
+            $('meta[property="og:site_name"]')
+                .attr("content")
+        );
 
-    organizationName =
-        findOrganizationName(parsed);
+    let organizationName = null;
 
-    if (organizationName) {
-        break;
+    for (const rawJson of structuredData) {
+        const parsed =
+            parseJson(rawJson);
+
+        organizationName =
+            findOrganizationName(parsed);
+
+        if (organizationName) {
+            break;
+        }
     }
-}
+
+    // =========================================================
+    // PLATFORM DETECTION
+    // =========================================================
+
+    const htmlLower =
+        String(html || "")
+            .toLowerCase();
+
+    const shopifySignals = {
+        cdnShopify:
+            htmlLower.includes(
+                "cdn.shopify.com"
+            ),
+
+        cdnShopifyCdn:
+            htmlLower.includes(
+                "cdn.shopifycdn.net"
+            ),
+
+        shopifyTheme:
+            htmlLower.includes(
+                "shopify.theme"
+            ),
+
+        shopifyRoutes:
+            htmlLower.includes(
+                "shopify.routes"
+            ),
+
+        shopifyPaymentButton:
+            htmlLower.includes(
+                "shopify-payment-button"
+            ),
+
+        shopifyPay:
+            htmlLower.includes(
+                "/shopify_pay/"
+            ),
+
+        shopifyAnalytics:
+            htmlLower.includes(
+                "ep.shopify_event_name"
+            ),
+
+        shopifyCdnShop:
+            htmlLower.includes(
+                "/cdn/shop/"
+            ),
+
+        shopifyFonts:
+            htmlLower.includes(
+                "/cdn/fonts/"
+            ),
+
+        shopifyCart:
+            htmlLower.includes(
+                "/cart/add"
+            ),
+
+        shopifyProductJson:
+            htmlLower.includes(
+                ".js"
+            ) &&
+            (
+                htmlLower.includes(
+                    "product"
+                )
+            )
+    };
+
+    const shopifySignalCount =
+        Object.values(
+            shopifySignals
+        ).filter(Boolean).length;
+
+    let platform = "unknown";
+
+    try {
+        const hostname =
+            new URL(pageUrl)
+                .hostname
+                .toLowerCase();
+
+        if (
+            hostname.endsWith(
+                ".myshopify.com"
+            )
+        ) {
+            platform = "shopify";
+        } else if (
+            shopifySignalCount >= 2
+        ) {
+            platform = "shopify";
+        }
+    } catch {
+        if (
+            shopifySignalCount >= 2
+        ) {
+            platform = "shopify";
+        }
+    }
+
     // =========================================================
     // PRODUCT STRUCTURED DATA
     // =========================================================
@@ -311,9 +742,11 @@ for (const rawJson of structuredData) {
     let productSchema = null;
 
     for (const rawJson of structuredData) {
-        const parsed = parseJson(rawJson);
+        const parsed =
+            parseJson(rawJson);
 
-        const product = findProductSchema(parsed);
+        const product =
+            findProductSchema(parsed);
 
         if (product) {
             productSchema = product;
@@ -326,7 +759,9 @@ for (const rawJson of structuredData) {
     // =========================================================
 
     const productTitle =
-        cleanText(productSchema?.name) ||
+        cleanText(
+            productSchema?.name
+        ) ||
 
         cleanText(
             $('[itemprop="name"]')
@@ -370,7 +805,9 @@ for (const rawJson of structuredData) {
     // =========================================================
 
     const productDescription =
-        cleanText(productSchema?.description) ||
+        cleanText(
+            productSchema?.description
+        ) ||
 
         cleanText(
             $('[itemprop="description"]')
@@ -404,13 +841,18 @@ for (const rawJson of structuredData) {
 
     let primaryOffer = null;
 
-    if (Array.isArray(productSchema?.offers)) {
+    if (
+        Array.isArray(
+            productSchema?.offers
+        )
+    ) {
         primaryOffer =
             productSchema.offers[0] ||
             null;
     } else if (
         productSchema?.offers &&
-        typeof productSchema.offers === "object"
+        typeof productSchema.offers ===
+            "object"
     ) {
         primaryOffer =
             productSchema.offers;
@@ -463,17 +905,23 @@ for (const rawJson of structuredData) {
     // =========================================================
 
     const schemaCompareAtPrice =
-        primaryOffer?.priceSpecification?.price ??
+        primaryOffer
+            ?.priceSpecification
+            ?.price ??
         null;
 
     const domCompareAtPrice =
         $('[data-compare-price]')
             .first()
-            .attr("data-compare-price") ||
+            .attr(
+                "data-compare-price"
+            ) ||
 
         $('[data-compare-at-price]')
             .first()
-            .attr("data-compare-at-price") ||
+            .attr(
+                "data-compare-at-price"
+            ) ||
 
         $(".compare-at-price")
             .first()
@@ -489,7 +937,9 @@ for (const rawJson of structuredData) {
 
     const productCompareAtPrice =
         schemaCompareAtPrice ??
-        cleanText(domCompareAtPrice);
+        cleanText(
+            domCompareAtPrice
+        );
 
     // =========================================================
     // PRODUCT CURRENCY
@@ -515,7 +965,11 @@ for (const rawJson of structuredData) {
     const productImages = [];
 
     if (productSchema?.image) {
-        if (Array.isArray(productSchema.image)) {
+        if (
+            Array.isArray(
+                productSchema.image
+            )
+        ) {
             productImages.push(
                 ...productSchema.image
             );
@@ -539,7 +993,6 @@ for (const rawJson of structuredData) {
         }
     );
 
-    // Look for common Shopify product image containers
     $(
         [
             ".product__media img",
@@ -577,8 +1030,9 @@ for (const rawJson of structuredData) {
 
     if (schemaAvailability) {
         const availability =
-            String(schemaAvailability)
-                .toLowerCase();
+            String(
+                schemaAvailability
+            ).toLowerCase();
 
         if (
             availability.includes(
@@ -613,15 +1067,20 @@ for (const rawJson of structuredData) {
         variantInputs > 0;
 
     // =========================================================
-    // REVIEWS
+    // BODY TEXT
     // =========================================================
 
+    const bodyText = $("body")
+        .text()
+        .replace(/\s+/g, " ")
+        .trim();
+
     const bodyTextLower =
-        $("body")
-            .text()
-            .replace(/\s+/g, " ")
-            .trim()
-            .toLowerCase();
+        bodyText.toLowerCase();
+
+    // =========================================================
+    // REVIEWS
+    // =========================================================
 
     const reviewKeywords = [
         "reviews",
@@ -637,7 +1096,9 @@ for (const rawJson of structuredData) {
     const hasReviews =
         reviewKeywords.some(
             (keyword) =>
-                bodyTextLower.includes(keyword)
+                bodyTextLower.includes(
+                    keyword
+                )
         );
 
     // =========================================================
@@ -665,13 +1126,17 @@ for (const rawJson of structuredData) {
     const hasShipping =
         shippingKeywords.some(
             (keyword) =>
-                bodyTextLower.includes(keyword)
+                bodyTextLower.includes(
+                    keyword
+                )
         );
 
     const hasReturns =
         returnKeywords.some(
             (keyword) =>
-                bodyTextLower.includes(keyword)
+                bodyTextLower.includes(
+                    keyword
+                )
         );
 
     // =========================================================
@@ -681,12 +1146,14 @@ for (const rawJson of structuredData) {
     const product = {
         title: productTitle,
 
-        description: productDescription,
+        description:
+            productDescription,
 
         descriptionLength:
             productDescription?.length || 0,
 
-        price: productPrice,
+        price:
+            productPrice,
 
         compareAtPrice:
             productCompareAtPrice,
@@ -718,20 +1185,12 @@ for (const rawJson of structuredData) {
     };
 
     // =========================================================
-    // BODY
-    // =========================================================
-
-    const bodyText = $("body")
-        .text()
-        .replace(/\s+/g, " ")
-        .trim();
-
-    // =========================================================
     // BASIC STORE SIGNALS
     // =========================================================
 
     const hasEmailCapture =
-        $("input[type='email']").length > 0;
+        $("input[type='email']")
+            .length > 0;
 
     const hasContactForm =
         forms.length > 0;
@@ -756,15 +1215,20 @@ for (const rawJson of structuredData) {
         "adicionar ao carrinho"
     ];
 
-    const isPurchaseText = (text = "") => {
-        const normalized = text
-            .replace(/\s+/g, " ")
-            .trim()
-            .toLowerCase();
+    const isPurchaseText = (
+        text = ""
+    ) => {
+        const normalized =
+            text
+                .replace(/\s+/g, " ")
+                .trim()
+                .toLowerCase();
 
         return addToCartKeywords.some(
             (keyword) =>
-                normalized.includes(keyword)
+                normalized.includes(
+                    keyword
+                )
         );
     };
 
@@ -864,7 +1328,7 @@ for (const rawJson of structuredData) {
         openGraphSiteName ||
         organizationName ||
         cleanText(title) ||
-        null;    
+        null;
 
     // =========================================================
     // RETURN
@@ -874,6 +1338,17 @@ for (const rawJson of structuredData) {
         url: pageUrl,
 
         storeName,
+
+        // =====================================================
+        // PLATFORM
+        // =====================================================
+
+        platform,
+
+        platformSignals: {
+            shopify: shopifySignals,
+            shopifySignalCount
+        },
 
         // =====================================================
         // SEO
@@ -900,6 +1375,18 @@ for (const rawJson of structuredData) {
         // =====================================================
 
         product,
+
+        // =====================================================
+        // PRODUCT DISCOVERY
+        // =====================================================
+
+        productDiscovery: {
+            total:
+                discoveredProductUrls.length,
+
+            urls:
+                discoveredProductUrls
+        },
 
         // =====================================================
         // HEADINGS

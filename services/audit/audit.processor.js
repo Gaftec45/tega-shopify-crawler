@@ -129,30 +129,53 @@ const processAudit = async (auditId) => {
             );
         }
 
+// ========================================
+// SAVE CRAWL DATA
+// ========================================
 
-        // ========================================
-        // SAVE CRAWL DATA
-        // ========================================
+auditRecord.crawl =
+    crawlResult.data;
 
-        auditRecord.crawl =
-            crawlResult.data;
+auditRecord.finalUrl =
+    crawlResult.data.finalUrl || null;
 
-        auditRecord.finalUrl =
-            crawlResult.data.finalUrl || null;
-
-        auditRecord.storeName =
-            crawlResult.data.storeName ||
-            null;
-
-
-        const productsFound =
-            crawlResult.data.products?.crawled ||
-            0;
+auditRecord.storeName =
+    crawlResult.data.storeName ||
+    null;
 
 
-        auditRecord.productsFound =
-            productsFound;
+// ========================================
+// SAVE CONTACT / EMAIL DATA
+// ========================================
 
+const contactData =
+    crawlResult.data.contact || {};
+
+auditRecord.contact = {
+    emails:
+        Array.isArray(contactData.emails)
+            ? contactData.emails
+            : [],
+
+    totalEmails:
+        Number(contactData.totalEmails) || 0,
+
+    primaryEmail:
+        contactData.primaryEmail || null,
+
+    pagesCrawled:
+        Array.isArray(contactData.pagesCrawled)
+            ? contactData.pagesCrawled
+            : []
+};
+
+
+const productsFound =
+    crawlResult.data.products?.crawled ||
+    0;
+
+auditRecord.productsFound =
+    productsFound;
 
         await updateProgress(
             auditRecord,

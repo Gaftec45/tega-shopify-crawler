@@ -1,27 +1,69 @@
 const { URL } = require("url");
 
+
 /* =========================================================
    HELPERS
 ========================================================= */
 
-const normalizeHostname = (hostname) =>
-    hostname.replace(/^www\./, "").toLowerCase();
+const normalizeHostname = (hostname = "") =>
+    hostname
+        .replace(/^www\./, "")
+        .toLowerCase();
 
 
 const isSameDomain = (url, baseUrl) => {
+
     return (
         normalizeHostname(url.hostname) ===
         normalizeHostname(baseUrl.hostname)
     );
+
 };
 
 
-const normalizeProductUrl = (url) => {
-    url.search = "";
-    url.hash = "";
+const normalizeUrl = (url) => {
 
-    // Shopify product URLs should not have a trailing slash
-    return url.toString().replace(/\/$/, "");
+    url.hash = "";
+    url.search = "";
+
+    return url
+        .toString()
+        .replace(/\/$/, "");
+
+};
+
+
+const isProductPath = (pathname = "") => {
+
+    const normalized =
+        pathname
+            .toLowerCase()
+            .replace(/\/+/g, "/");
+
+    return (
+        normalized === "/products" ||
+        normalized.includes("/products/")
+    );
+
+};
+
+
+const isGiftCardProduct = (
+    pathname = ""
+) => {
+
+    const normalized =
+        pathname.toLowerCase();
+
+    return (
+        normalized.includes(
+            "/products/gift-card"
+        ) ||
+        normalized.includes(
+            "/products/giftcard"
+        )
+    );
+
 };
 
 
@@ -29,34 +71,68 @@ const normalizeProductUrl = (url) => {
    LINK CLASSIFIER
 ========================================================= */
 
-const classifyLinks = (links = [], baseUrl) => {
-    const base = new URL(baseUrl);
+const classifyLinks = (
+    links = [],
+    baseUrl
+) => {
 
-    const seen = new Set();
+    let base;
+
+    try {
+
+        base =
+            new URL(baseUrl);
+
+    } catch {
+
+        return {
+            products: [],
+            ignored: [],
+            collections: [],
+            importantPages: []
+        };
+
+    }
+
+
+    const seen =
+        new Set();
 
     const products = [];
     const ignored = [];
 
-    for (const link of links) {
 
-        if (!link || !link.href) {
+    for (
+        const link of links
+    ) {
+
+        if (
+            !link ||
+            !link.href
+        ) {
             continue;
         }
+
 
         let url;
 
         try {
-            url = new URL(
-                link.href,
-                baseUrl
-            );
+
+            url =
+                new URL(
+                    link.href,
+                    baseUrl
+                );
+
         } catch {
+
             continue;
+
         }
 
 
         /* =====================================================
-           ONLY HTTP / HTTPS
+           HTTP / HTTPS ONLY
         ===================================================== */
 
         if (
@@ -68,10 +144,16 @@ const classifyLinks = (links = [], baseUrl) => {
 
 
         /* =====================================================
-           SAME DOMAIN ONLY
+           SAME DOMAIN
         ===================================================== */
 
-        if (!isSameDomain(url, base)) {
+        if (
+            !isSameDomain(
+                url,
+                base
+            )
+        ) {
+
             ignored.push({
                 ...link,
                 reason: "external"
@@ -86,67 +168,104 @@ const classifyLinks = (links = [], baseUrl) => {
         ===================================================== */
 
         const pathname =
-            url.pathname.toLowerCase();
+            url.pathname
+                .toLowerCase();
+
 
         const normalizedUrl =
-            normalizeProductUrl(url);
+            normalizeUrl(
+                url
+            );
 
 
         /* =====================================================
-           DUPLICATES
+           DUPLICATE
         ===================================================== */
 
-        if (seen.has(normalizedUrl)) {
+        if (
+            seen.has(
+                normalizedUrl
+            )
+        ) {
             continue;
         }
 
-        seen.add(normalizedUrl);
+        seen.add(
+            normalizedUrl
+        );
 
 
         const cleanLink = {
+
             text:
                 typeof link.text === "string"
-                    ? link.text.trim()
+                    ? link.text
+                        .replace(/\s+/g, " ")
+                        .trim()
                     : "",
 
-            href: normalizedUrl
+            href:
+                normalizedUrl
+
         };
 
 
         /* =====================================================
-           SHOPIFY PRODUCT
+           PRODUCT
         ===================================================== */
 
         if (
-    pathname === "/products" ||
-    pathname.startsWith("/products/")
-) {
+            isProductPath(
+                pathname
+            )
+        ) {
 
-    if (pathname === "/products") {
-        ignored.push({
-            ...cleanLink,
-            reason: "products_index"
-        });
+            /*
+             * /products itself is an index page,
+             * not a product.
+             */
 
-        continue;
-    }
+            if (
+                pathname ===
+                "/products"
+            ) {
 
-    if (
-        pathname.includes("/products/gift-card") ||
-        pathname.includes("/products/giftcard")
-    ) {
-        ignored.push({
-            ...cleanLink,
-            reason: "gift_card"
-        });
+                ignored.push({
+                    ...cleanLink,
+                    reason:
+                        "products_index"
+                });
 
-        continue;
-    }
+                continue;
+            }
 
-    products.push(cleanLink);
 
-    continue;
-}
+            /*
+             * Ignore gift cards.
+             */
+
+            if (
+                isGiftCardProduct(
+                    pathname
+                )
+            ) {
+
+                ignored.push({
+                    ...cleanLink,
+                    reason:
+                        "gift_card"
+                });
+
+                continue;
+            }
+
+
+            products.push(
+                cleanLink
+            );
+
+            continue;
+        }
 
 
         /* =====================================================
@@ -157,21 +276,22 @@ const classifyLinks = (links = [], baseUrl) => {
             ...cleanLink,
             reason: "other"
         });
+
     }
 
 
-    /* =========================================================
-       RESULT
-    ========================================================= */
-
     return {
+
         products,
+
         ignored,
 
-        // Kept for compatibility with existing code
         collections: [],
+
         importantPages: []
+
     };
+
 };
 
 

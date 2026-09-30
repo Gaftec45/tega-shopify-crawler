@@ -29,10 +29,7 @@ console.log(
 // ========================================
 
 app.use(cors({
-    origin: [
-        "http://localhost:3000",
-        "https://tega-scout.vercel.app"
-    ],
+    origin: ["http://localhost:3000", "https://tegascout.site"],
     methods: ["GET", "POST", "DELETE", "PUT"],
 }));
 

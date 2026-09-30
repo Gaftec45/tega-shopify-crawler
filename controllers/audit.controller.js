@@ -60,7 +60,7 @@ const getUserAudits = async (req, res) => {
         const [audits, total] = await Promise.all([
             Audit.find(filter)
                 .select(
-                    "user storeUrl requestedUrl finalUrl storeName status score productsFound progress currentStep error createdAt updatedAt"
+                    "user storeUrl requestedUrl finalUrl storeName status score contact productsFound progress currentStep error createdAt updatedAt"
                 )
                 .sort({
                     createdAt: -1
@@ -178,6 +178,8 @@ const getAuditReport = async (req, res) => {
                 status: audit.status,
 
                 score: audit.score,
+
+                contact: audit.contact,
 
                 aiAudit: audit.aiAudit,
 
