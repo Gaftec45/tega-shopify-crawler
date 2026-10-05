@@ -16,6 +16,7 @@ const {
 const {
   createAudit,
 } = require("../controllers/audit.create.controller");
+const { saveAuditAsLead } = require("../controllers/auditLeadController");
 
 
 // ========================================
@@ -72,6 +73,8 @@ router.post("/:id/share", auth, createPublicReport
 // ========================================
 
 router.delete("/:id/share", auth, revokePublicReport);
+
+router.post('/:id/save-lead', auth, saveAuditAsLead)
 
 
 module.exports = router;
