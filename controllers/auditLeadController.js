@@ -1,5 +1,6 @@
 const Audit = require('../models/audit.model');
-const { createLeadFromAudit } = require('../services/main/mainApiService');
+const { createLeadFromAudit, getAuditLeadStatus } = require('../services/main/mainApiService');
+
 
 const saveAuditAsLead = async (req, res) => {
   try {
@@ -121,6 +122,48 @@ const saveAuditAsLead = async (req, res) => {
   }
 }
 
+
+const getAuditLeadStatusController = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.user.id;
+
+        const audit = await Audit.findOne({
+            _id: id,
+            user: userId,
+        }).select("_id");
+
+        if (!audit) {
+            return res.status(404).json({
+                success: false,
+                message: "Audit not found",
+            });
+        }
+
+        const result = await getAuditLeadStatus({
+            userId,
+            sourceAuditId: id,
+        });
+
+        return res.status(200).json({
+            success: true,
+            saved: result?.saved === true,
+            leadId: result?.leadId || null,
+        });
+    } catch (error) {
+        console.error(
+            "Get audit lead status error:",
+            error.response?.data || error.message
+        );
+
+        return res.status(500).json({
+            success: false,
+            message: "Failed to check lead status",
+        });
+    }
+};
+
 module.exports = {
-    saveAuditAsLead
+    saveAuditAsLead,
+    getAuditLeadStatusController
 }

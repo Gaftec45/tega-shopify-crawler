@@ -16,7 +16,7 @@ const {
 const {
   createAudit,
 } = require("../controllers/audit.create.controller");
-const { saveAuditAsLead } = require("../controllers/auditLeadController");
+const { saveAuditAsLead, getAuditLeadStatusController } = require("../controllers/auditLeadController");
 
 
 // ========================================
@@ -74,7 +74,8 @@ router.post("/:id/share", auth, createPublicReport
 
 router.delete("/:id/share", auth, revokePublicReport);
 
-router.post('/:id/save-lead', auth, saveAuditAsLead)
+router.post('/:id/save-lead', auth, saveAuditAsLead);
+router.get("/:id/lead-status", auth, getAuditLeadStatusController);
 
 
 module.exports = router;

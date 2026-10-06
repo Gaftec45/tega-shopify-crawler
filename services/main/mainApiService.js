@@ -127,9 +127,27 @@ const createLeadFromAudit = async ({
   return response.data
 }
 
+const getAuditLeadStatus = async ({
+    userId,
+    sourceAuditId,
+}) => {
+    const response = await mainAPI.get(
+        "/internal/leads/status",
+        {
+            params: {
+                userId,
+                sourceAuditId,
+            },
+        }
+    );
+
+    return response.data;
+};
+
 module.exports = {
     reserveAuditCredits,
     commitAuditCredits,
     releaseAuditCredits,
     createLeadFromAudit,
+    getAuditLeadStatus,
 };
