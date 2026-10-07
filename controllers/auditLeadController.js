@@ -131,7 +131,7 @@ const getAuditLeadStatusController = async (req, res) => {
         const audit = await Audit.findOne({
             _id: id,
             user: userId,
-        }).select("_id");
+        }).select("_id contact");
 
         if (!audit) {
             return res.status(404).json({
@@ -140,9 +140,15 @@ const getAuditLeadStatusController = async (req, res) => {
             });
         }
 
+        const email =
+            audit.contact?.primaryEmail ||
+            audit.contact?.emails?.[0]?.email ||
+            "";
+
         const result = await getAuditLeadStatus({
             userId,
             sourceAuditId: id,
+            email,
         });
 
         return res.status(200).json({

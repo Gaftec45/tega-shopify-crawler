@@ -130,6 +130,7 @@ const createLeadFromAudit = async ({
 const getAuditLeadStatus = async ({
     userId,
     sourceAuditId,
+    email,
 }) => {
     const response = await mainAPI.get(
         "/internal/leads/status",
@@ -137,6 +138,7 @@ const getAuditLeadStatus = async ({
             params: {
                 userId,
                 sourceAuditId,
+                email,
             },
         }
     );
