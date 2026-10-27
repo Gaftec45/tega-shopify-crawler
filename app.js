@@ -32,8 +32,13 @@ console.log(
 // ========================================
 
 app.use(cors({
-    origin: ["http://localhost:3000", "https://tegascout.site", "https://www.tegascout.site"],
-    methods: ["GET", "POST", "DELETE", "PUT"],
+  origin: [
+    'http://localhost:3000',
+    'https://tegascout.site',
+    'https://www.tegascout.site',
+    'https://intel.tegascout.site',
+  ],
+  methods: ['GET', 'POST', 'DELETE', 'PUT'],
 }));
 
 app.use(express.json());
