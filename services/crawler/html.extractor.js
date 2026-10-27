@@ -1,1513 +1,1147 @@
+
 const cheerio = require("cheerio");
 
-const extractPageData = (html, pageUrl) => {
-    const $ = cheerio.load(html);
+/* =========================================================
+   TEXT HELPERS
+========================================================= */
 
-    // =========================================================
-    // HELPERS
-    // =========================================================
-
-    const cleanText = (value) => {
-        if (value === null || value === undefined) {
-            return null;
-        }
-
-        const cleaned = String(value)
-            .replace(/\s+/g, " ")
-            .trim();
-
-        return cleaned || null;
-    };
-
-    const parseJson = (value) => {
-        if (!value) {
-            return null;
-        }
-
-        try {
-            return JSON.parse(value);
-        } catch {
-            return null;
-        }
-    };
-
-    const normalizeUrl = (url) => {
-        if (!url) {
-            return null;
-        }
-
-        try {
-            const resolved = new URL(url, pageUrl);
-
-            if (
-                resolved.protocol !== "http:" &&
-                resolved.protocol !== "https:"
-            ) {
-                return null;
-            }
-
-            resolved.hash = "";
-
-            return resolved.toString();
-        } catch {
-            return null;
-        }
-    };
-
-    const isProductPath = (url) => {
-        if (!url) {
-            return false;
-        }
-
-        try {
-            const parsed = new URL(url, pageUrl);
-
-            const segments = parsed.pathname
-                .toLowerCase()
-                .split("/")
-                .filter(Boolean);
-
-            const productIndex = segments.indexOf("products");
-
-            if (productIndex === -1) {
-                return false;
-            }
-
-            // /products is collection/index page
-            // /en/products is also collection/index page
-            if (!segments[productIndex + 1]) {
-                return false;
-            }
-
-            return true;
-        } catch {
-            return false;
-        }
-    };
-
-    const isSameDomain = (url) => {
-        try {
-            const target = new URL(url, pageUrl);
-            const base = new URL(pageUrl);
-
-            const normalizeHostname = (hostname) =>
-                hostname
-                    .replace(/^www\./i, "")
-                    .toLowerCase();
-
-            return (
-                normalizeHostname(target.hostname) ===
-                normalizeHostname(base.hostname)
-            );
-        } catch {
-            return false;
-        }
-    };
-
-    const isGiftCardUrl = (url) => {
-        if (!url) {
-            return false;
-        }
-
-        try {
-            const pathname = new URL(url, pageUrl)
-                .pathname
-                .toLowerCase();
-
-            return (
-                pathname.includes("/products/gift-card") ||
-                pathname.includes("/products/giftcard") ||
-                pathname.includes("/products/gift_card")
-            );
-        } catch {
-            return false;
-        }
-    };
-
-    const findProductSchema = (data) => {
-        if (!data) {
-            return null;
-        }
-
-        if (Array.isArray(data)) {
-            for (const item of data) {
-                const product = findProductSchema(item);
-
-                if (product) {
-                    return product;
-                }
-            }
-
-            return null;
-        }
-
-        if (typeof data !== "object") {
-            return null;
-        }
-
-        const type = data["@type"];
-
-        if (
-            type === "Product" ||
-            (Array.isArray(type) &&
-                type.includes("Product"))
-        ) {
-            return data;
-        }
-
-        if (Array.isArray(data["@graph"])) {
-            return findProductSchema(data["@graph"]);
-        }
-
-        return null;
-    };
-
-    const findOrganizationName = (data) => {
-        if (!data) {
-            return null;
-        }
-
-        if (Array.isArray(data)) {
-            for (const item of data) {
-                const name =
-                    findOrganizationName(item);
-
-                if (name) {
-                    return name;
-                }
-            }
-
-            return null;
-        }
-
-        if (typeof data !== "object") {
-            return null;
-        }
-
-        const type = data["@type"];
-
-        if (
-            type === "Organization" ||
-            type === "LocalBusiness" ||
-            (Array.isArray(type) &&
-                (
-                    type.includes("Organization") ||
-                    type.includes("LocalBusiness")
-                ))
-        ) {
-            return cleanText(data.name);
-        }
-
-        if (Array.isArray(data["@graph"])) {
-            return findOrganizationName(
-                data["@graph"]
-            );
-        }
-
-        return null;
-    };
-
-    // =========================================================
-    // BASIC SEO
-    // =========================================================
-
-    const title = $("title")
-        .first()
-        .text()
+const cleanText = (value = "") =>
+    String(value || "")
+        .replace(/\s+/g, " ")
         .trim();
 
-    const metaDescription =
-        $('meta[name="description"]')
-            .attr("content")
-            ?.trim() || null;
+const parseJson = (value) => {
+    try {
+        return JSON.parse(value);
+    } catch {
+        return null;
+    }
+};
 
-    const canonical =
-        $('link[rel="canonical"]')
-            .attr("href")
-            ?.trim() || null;
+const normalizeHostname = (hostname = "") =>
+    hostname
+        .replace(/^www\./i, "")
+        .toLowerCase()
+        .trim();
 
-    // =========================================================
-    // HEADINGS
-    // =========================================================
+const isHttpUrl = (url) => {
+    try {
+        const parsed = new URL(url);
 
-    const headings = {
-        h1: $("h1")
-            .map((_, element) =>
-                $(element)
-                    .text()
-                    .trim()
+        return (
+            parsed.protocol === "http:" ||
+            parsed.protocol === "https:"
+        );
+    } catch {
+        return false;
+    }
+};
+
+const normalizeUrl = (url, baseUrl) => {
+    try {
+        const parsed = new URL(url, baseUrl);
+
+        if (
+            parsed.protocol !== "http:" &&
+            parsed.protocol !== "https:"
+        ) {
+            return null;
+        }
+
+        parsed.hash = "";
+
+        return parsed.toString().replace(/\/$/, "");
+    } catch {
+        return null;
+    }
+};
+
+const isSameDomain = (url, baseUrl) => {
+    try {
+        const candidate = new URL(url);
+        const base = new URL(baseUrl);
+
+        return (
+            normalizeHostname(candidate.hostname) ===
+            normalizeHostname(base.hostname)
+        );
+    } catch {
+        return false;
+    }
+};
+
+
+/* =========================================================
+   PLATFORM AND URL DETECTION
+========================================================= */
+
+const isEtsyHost = (hostname = "") => {
+    return (
+        normalizeHostname(hostname) === "etsy.com"
+    );
+};
+
+const isEtsyShopUrl = (url) => {
+    try {
+        const parsed = new URL(url);
+
+        return (
+            isEtsyHost(parsed.hostname) &&
+            /^\/shop\/[^/]+\/?$/i.test(parsed.pathname)
+        );
+    } catch {
+        return false;
+    }
+};
+
+const isEtsyListingUrl = (url) => {
+    try {
+        const parsed = new URL(url);
+
+        return (
+            isEtsyHost(parsed.hostname) &&
+            /^\/listing\/\d+(?:\/|$)/i.test(
+                parsed.pathname
             )
-            .get()
-            .filter(Boolean),
+        );
+    } catch {
+        return false;
+    }
+};
 
-        h2: $("h2")
-            .map((_, element) =>
-                $(element)
-                    .text()
-                    .trim()
+const isProductPath = (pathname = "") => {
+    const segments = pathname
+        .split("/")
+        .filter(Boolean);
+
+    /*
+     * Supports:
+     * /products/example
+     * /en/products/example
+     * /de/products/example
+     */
+    const productIndex = segments.findIndex(
+        (segment) =>
+            segment.toLowerCase() === "products"
+    );
+
+    return (
+        productIndex !== -1 &&
+        Boolean(segments[productIndex + 1])
+    );
+};
+
+const isGiftCardUrl = (url) => {
+    try {
+        const parsed = new URL(url);
+        const pathname = parsed.pathname.toLowerCase();
+
+        return (
+            /\/products\/gift-?card(?:\/|$)/i.test(pathname) ||
+            /\/products\/[^/]*gift-?card[^/]*(?:\/|$)/i.test(pathname)
+        );
+    } catch {
+        return false;
+    }
+};
+
+const isProductUrlForPlatform = (url, platform) => {
+    try {
+        const parsed = new URL(url);
+
+        if (platform === "etsy") {
+            return isEtsyListingUrl(url);
+        }
+
+        return (
+            isProductPath(parsed.pathname) &&
+            !isGiftCardUrl(url)
+        );
+    } catch {
+        return false;
+    }
+};
+
+const detectPlatform = (pageUrl, html = "") => {
+    try {
+        const hostname = new URL(pageUrl).hostname;
+
+        /*
+         * Etsy must be detected explicitly.
+         * Etsy listings and shops use the shared
+         * etsy.com domain.
+         */
+        if (isEtsyHost(hostname)) {
+            return "etsy";
+        }
+
+        if (
+            normalizeHostname(hostname).endsWith(
+                ".myshopify.com"
             )
-            .get()
-            .filter(Boolean),
+        ) {
+            return "shopify";
+        }
 
-        h3: $("h3")
-            .map((_, element) =>
-                $(element)
-                    .text()
-                    .trim()
-            )
-            .get()
-            .filter(Boolean)
-    };
+        const lowerHtml = String(html || "").toLowerCase();
 
-    // =========================================================
-    // IMAGES
-    // =========================================================
+        const shopifySignals = [
+            "cdn.shopify.com",
+            "cdn.shopifycdn.net",
+            "shopify.theme",
+            "shopify.routes",
+            "shopify-payment-button",
+            "/shopify_pay/",
+            "ep.shopify_event_name",
+            "/cdn/shop/",
+            "/cdn/fonts/",
+            "shopifyanalytics",
+            "shopify.loadfeatures",
+            "shopify-section",
+            "shopify-section-header"
+        ];
 
-    const images = $("img")
-        .map((_, element) => ({
-            src:
-                $(element).attr("src") ||
-                $(element).attr("data-src") ||
-                $(element).attr("data-original") ||
-                $(element).attr("data-lazy-src") ||
-                null,
-
-            alt:
-                $(element)
-                    .attr("alt")
-                    ?.trim() || null
-        }))
-        .get();
-
-    const imagesWithoutAlt =
-        images.filter(
-            (image) => !image.alt
+        const matchedSignals = shopifySignals.filter(
+            (signal) => lowerHtml.includes(signal)
         );
 
-    // =========================================================
-    // LINKS
-    // =========================================================
+        return matchedSignals.length >= 2
+            ? "shopify"
+            : "unknown";
+    } catch {
+        return "unknown";
+    }
+};
 
-    const links = $("a[href]")
-        .map((_, element) => ({
-            text:
-                $(element)
-                    .text()
-                    .replace(/\s+/g, " ")
-                    .trim(),
 
-            href:
-                $(element).attr("href") ||
-                null
-        }))
-        .get();
+/* =========================================================
+   JSON-LD HELPERS
+========================================================= */
 
-    // =========================================================
-    // PRODUCT URL DISCOVERY
-    //
-    // Handles:
-    // /products/product-name
-    // /en/products/product-name
-    // /de/products/product-name
-    // /fr/products/product-name
-    // /en-US/products/product-name
-    // =========================================================
+const getJsonLdObjects = (value, output = []) => {
+    if (!value) {
+        return output;
+    }
 
-    const discoveredProductUrls = [];
-    const productUrlSet = new Set();
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            getJsonLdObjects(item, output);
+        }
 
-    const addProductUrl = (
-        rawUrl,
-        source = "unknown"
-    ) => {
+        return output;
+    }
+
+    if (typeof value !== "object") {
+        return output;
+    }
+
+    output.push(value);
+
+    if (value["@graph"]) {
+        getJsonLdObjects(value["@graph"], output);
+    }
+
+    if (value.mainEntity) {
+        getJsonLdObjects(value.mainEntity, output);
+    }
+
+    if (value.itemListElement) {
+        getJsonLdObjects(value.itemListElement, output);
+    }
+
+    return output;
+};
+
+const getSchemaTypes = (schema) => {
+    if (!schema || typeof schema !== "object") {
+        return [];
+    }
+
+    const value = schema["@type"];
+
+    if (Array.isArray(value)) {
+        return value.map((item) =>
+            String(item).toLowerCase()
+        );
+    }
+
+    return value
+        ? [String(value).toLowerCase()]
+        : [];
+};
+
+const isProductSchema = (schema) =>
+    getSchemaTypes(schema).includes("product");
+
+const extractProductSchema = (schemas = []) =>
+    schemas.find(isProductSchema) || null;
+
+const extractOrganizationSchema = (schemas = []) =>
+    schemas.find((schema) => {
+        const types = getSchemaTypes(schema);
+
+        return (
+            types.includes("organization") ||
+            types.includes("store") ||
+            types.includes("localbusiness")
+        );
+    }) || null;
+
+const extractSchemaPrice = (productSchema) => {
+    if (!productSchema) {
+        return null;
+    }
+
+    const offers = Array.isArray(productSchema.offers)
+        ? productSchema.offers
+        : productSchema.offers
+            ? [productSchema.offers]
+            : [];
+
+    const prices = offers
+        .map((offer) => {
+            const price =
+                offer?.price ??
+                offer?.lowPrice ??
+                offer?.highPrice ??
+                offer?.priceSpecification?.price;
+
+            const numeric = Number(price);
+
+            return Number.isFinite(numeric)
+                ? numeric
+                : null;
+        })
+        .filter((price) => price !== null);
+
+    if (!prices.length) {
+        return null;
+    }
+
+    return {
+        lowest: Math.min(...prices),
+        highest: Math.max(...prices),
+        currency:
+            offers.find((offer) => offer?.priceCurrency)
+                ?.priceCurrency || null
+    };
+};
+
+const getSchemaImageUrls = (image) => {
+    if (!image) {
+        return [];
+    }
+
+    const items = Array.isArray(image) ? image : [image];
+
+    return items
+        .map((item) => {
+            if (typeof item === "string") {
+                return item;
+            }
+
+            return item?.url || item?.contentUrl || null;
+        })
+        .filter(Boolean);
+};
+
+
+/* =========================================================
+   PRODUCT URL DISCOVERY
+========================================================= */
+
+const discoverProductUrls = (
+    $,
+    pageUrl,
+    platform,
+    schemas = []
+) => {
+    const found = [];
+    const seen = new Set();
+
+    const addProductUrl = (rawUrl, source) => {
         if (!rawUrl) {
             return;
         }
 
-        const normalizedUrl =
-            normalizeUrl(rawUrl);
+        const normalized = normalizeUrl(rawUrl, pageUrl);
 
-        if (!normalizedUrl) {
+        if (!normalized || !isHttpUrl(normalized)) {
             return;
         }
 
-        if (!isSameDomain(normalizedUrl)) {
-            return;
-        }
-
-        if (!isProductPath(normalizedUrl)) {
-            return;
-        }
-
-        if (isGiftCardUrl(normalizedUrl)) {
+        if (!isSameDomain(normalized, pageUrl)) {
             return;
         }
 
         if (
-            productUrlSet.has(
-                normalizedUrl
+            !isProductUrlForPlatform(
+                normalized,
+                platform
             )
         ) {
             return;
         }
 
-        productUrlSet.add(normalizedUrl);
+        /*
+         * Remove tracking/query parameters from discovered
+         * product URLs while preserving the path.
+         */
+        let cleanUrl = normalized;
 
-        discoveredProductUrls.push({
-            url: normalizedUrl,
+        try {
+            const parsed = new URL(normalized);
+            parsed.search = "";
+            parsed.hash = "";
+
+            cleanUrl = parsed.toString().replace(/\/$/, "");
+        } catch {
+            return;
+        }
+
+        if (seen.has(cleanUrl)) {
+            return;
+        }
+
+        seen.add(cleanUrl);
+
+        found.push({
+            url: cleanUrl,
             source
         });
     };
 
-    // ---------------------------------------------------------
-    // Product URLs from anchors
-    // ---------------------------------------------------------
+    /*
+     * Links from the rendered page.
+     */
+    $("a[href]").each((_, element) => {
+        const href = $(element).attr("href");
 
-    for (const link of links) {
-        addProductUrl(
-            link.href,
-            "anchor"
-        );
-    }
+        addProductUrl(href, "link");
+    });
 
-    // ---------------------------------------------------------
-    // Product URLs from canonical URL
-    // ---------------------------------------------------------
+    /*
+     * Canonical URL may point to a product listing.
+     */
+    const canonical = $('link[rel="canonical"]').attr("href");
 
     if (canonical) {
-        addProductUrl(
-            canonical,
-            "canonical"
-        );
+        addProductUrl(canonical, "canonical");
     }
 
-    // ---------------------------------------------------------
-    // Product URLs from structured data
-    // ---------------------------------------------------------
+    /*
+     * Product URLs declared in JSON-LD.
+     */
+    for (const schema of schemas) {
+        if (isProductSchema(schema)) {
+            addProductUrl(schema.url, "jsonld");
 
-    // This is useful for product pages and stores that expose
-    // product URLs through JSON-LD.
-    //
-    // We recursively search structured data for:
-    // - url
-    // - @id
-    // - item
-    // - mainEntityOfPage
-    // ---------------------------------------------------------
-
-    const collectProductUrlsFromJson = (
-        data,
-        source = "structured_data"
-    ) => {
-        if (!data) {
-            return;
-        }
-
-        if (Array.isArray(data)) {
-            for (const item of data) {
-                collectProductUrlsFromJson(
-                    item,
-                    source
-                );
+            if (schema["@id"]) {
+                addProductUrl(schema["@id"], "jsonld");
             }
 
-            return;
-        }
+            if (schema.mainEntityOfPage) {
+                const mainEntity = schema.mainEntityOfPage;
 
-        if (
-            typeof data !== "object"
-        ) {
-            return;
-        }
-
-        const type = data["@type"];
-
-        const isProduct =
-            type === "Product" ||
-            (
-                Array.isArray(type) &&
-                type.includes("Product")
-            );
-
-        if (isProduct) {
-            if (data.url) {
                 addProductUrl(
-                    data.url,
-                    source
+                    typeof mainEntity === "string"
+                        ? mainEntity
+                        : mainEntity?.["@id"] || mainEntity?.url,
+                    "jsonld"
                 );
             }
-
-            if (data["@id"]) {
-                addProductUrl(
-                    data["@id"],
-                    source
-                );
-            }
-
-            if (
-                data.mainEntityOfPage
-            ) {
-                if (
-                    typeof data.mainEntityOfPage ===
-                    "string"
-                ) {
-                    addProductUrl(
-                        data.mainEntityOfPage,
-                        source
-                    );
-                }
-
-                if (
-                    typeof data.mainEntityOfPage ===
-                    "object"
-                ) {
-                    addProductUrl(
-                        data.mainEntityOfPage.url,
-                        source
-                    );
-
-                    addProductUrl(
-                        data.mainEntityOfPage["@id"],
-                        source
-                    );
-                }
-            }
         }
-
-        // Search nested graph
-        if (data["@graph"]) {
-            collectProductUrlsFromJson(
-                data["@graph"],
-                source
-            );
-        }
-
-        // Search item
-        if (data.item) {
-            collectProductUrlsFromJson(
-                data.item,
-                source
-            );
-        }
-
-        // Search mainEntity
-        if (data.mainEntity) {
-            collectProductUrlsFromJson(
-                data.mainEntity,
-                source
-            );
-        }
-    };
-
-    // =========================================================
-    // FORMS
-    // =========================================================
-
-    const forms = $("form")
-        .map((_, element) => ({
-            action:
-                $(element).attr("action") ||
-                null,
-
-            method:
-                $(element).attr("method") ||
-                "get"
-        }))
-        .get();
-
-    // =========================================================
-    // BUTTONS
-    // =========================================================
-
-    const buttons = $(
-        "button, input[type='submit'], input[type='button']"
-    )
-        .map((_, element) => ({
-            text:
-                $(element).text().trim() ||
-                $(element)
-                    .attr("value")
-                    ?.trim() ||
-                null,
-
-            type:
-                $(element).attr("type") ||
-                null,
-
-            name:
-                $(element).attr("name") ||
-                null,
-
-            id:
-                $(element).attr("id") ||
-                null,
-
-            class:
-                $(element).attr("class") ||
-                null
-        }))
-        .get();
-
-    // =========================================================
-    // OPEN GRAPH
-    // =========================================================
-
-    const openGraph = {
-        title:
-            $('meta[property="og:title"]')
-                .attr("content") ||
-            null,
-
-        description:
-            $('meta[property="og:description"]')
-                .attr("content") ||
-            null,
-
-        image:
-            $('meta[property="og:image"]')
-                .attr("content") ||
-            null,
-
-        url:
-            $('meta[property="og:url"]')
-                .attr("content") ||
-            null
-    };
-
-    // =========================================================
-    // ROBOTS
-    // =========================================================
-
-    const robots =
-        $('meta[name="robots"]')
-            .attr("content")
-            ?.trim() ||
-        null;
-
-    // =========================================================
-    // STRUCTURED DATA
-    // =========================================================
-
-    const structuredData = $(
-        'script[type="application/ld+json"]'
-    )
-        .map((_, element) =>
-            $(element).html()
-        )
-        .get();
-
-    // =========================================================
-    // PARSE STRUCTURED DATA FOR PRODUCT DISCOVERY
-    // =========================================================
-
-    for (const rawJson of structuredData) {
-        const parsed = parseJson(rawJson);
-
-        collectProductUrlsFromJson(
-            parsed,
-            "structured_data"
-        );
-    }
-
-    // =========================================================
-    // STORE / BRAND NAME
-    // =========================================================
-
-    const openGraphSiteName =
-        cleanText(
-            $('meta[property="og:site_name"]')
-                .attr("content")
-        );
-
-    let organizationName = null;
-
-    for (const rawJson of structuredData) {
-        const parsed =
-            parseJson(rawJson);
-
-        organizationName =
-            findOrganizationName(parsed);
-
-        if (organizationName) {
-            break;
-        }
-    }
-
-    // =========================================================
-    // PLATFORM DETECTION
-    // =========================================================
-
-    const htmlLower =
-        String(html || "")
-            .toLowerCase();
-
-    const shopifySignals = {
-        cdnShopify:
-            htmlLower.includes(
-                "cdn.shopify.com"
-            ),
-
-        cdnShopifyCdn:
-            htmlLower.includes(
-                "cdn.shopifycdn.net"
-            ),
-
-        shopifyTheme:
-            htmlLower.includes(
-                "shopify.theme"
-            ),
-
-        shopifyRoutes:
-            htmlLower.includes(
-                "shopify.routes"
-            ),
-
-        shopifyPaymentButton:
-            htmlLower.includes(
-                "shopify-payment-button"
-            ),
-
-        shopifyPay:
-            htmlLower.includes(
-                "/shopify_pay/"
-            ),
-
-        shopifyAnalytics:
-            htmlLower.includes(
-                "ep.shopify_event_name"
-            ),
-
-        shopifyCdnShop:
-            htmlLower.includes(
-                "/cdn/shop/"
-            ),
-
-        shopifyFonts:
-            htmlLower.includes(
-                "/cdn/fonts/"
-            ),
-
-        shopifyCart:
-            htmlLower.includes(
-                "/cart/add"
-            ),
-
-        shopifyProductJson:
-            htmlLower.includes(
-                ".js"
-            ) &&
-            (
-                htmlLower.includes(
-                    "product"
-                )
-            )
-    };
-
-    const shopifySignalCount =
-        Object.values(
-            shopifySignals
-        ).filter(Boolean).length;
-
-    let platform = "unknown";
-
-    try {
-        const hostname =
-            new URL(pageUrl)
-                .hostname
-                .toLowerCase();
 
         if (
-            hostname.endsWith(
-                ".myshopify.com"
-            )
+            String(schema["@type"] || "").toLowerCase() ===
+            "itemlist"
         ) {
-            platform = "shopify";
-        } else if (
-            shopifySignalCount >= 2
-        ) {
-            platform = "shopify";
-        }
-    } catch {
-        if (
-            shopifySignalCount >= 2
-        ) {
-            platform = "shopify";
-        }
-    }
+            const items = schema.itemListElement || [];
 
-    // =========================================================
-    // PRODUCT STRUCTURED DATA
-    // =========================================================
+            for (const item of items) {
+                const itemUrl =
+                    item?.url ||
+                    item?.item?.url ||
+                    item?.item?.["@id"];
 
-    let productSchema = null;
-
-    for (const rawJson of structuredData) {
-        const parsed =
-            parseJson(rawJson);
-
-        const product =
-            findProductSchema(parsed);
-
-        if (product) {
-            productSchema = product;
-            break;
-        }
-    }
-
-    // =========================================================
-    // PRODUCT TITLE
-    // =========================================================
-
-    const productTitle =
-        cleanText(
-            productSchema?.name
-        ) ||
-
-        cleanText(
-            $('[itemprop="name"]')
-                .first()
-                .text()
-        ) ||
-
-        cleanText(
-            $('[data-product-title]')
-                .first()
-                .text()
-        ) ||
-
-        cleanText(
-            $(".product__title")
-                .first()
-                .text()
-        ) ||
-
-        cleanText(
-            $(".product-title")
-                .first()
-                .text()
-        ) ||
-
-        cleanText(
-            $('meta[property="og:title"]')
-                .attr("content")
-        ) ||
-
-        cleanText(
-            $("h1")
-                .first()
-                .text()
-        ) ||
-
-        null;
-
-    // =========================================================
-    // PRODUCT DESCRIPTION
-    // =========================================================
-
-    const productDescription =
-        cleanText(
-            productSchema?.description
-        ) ||
-
-        cleanText(
-            $('[itemprop="description"]')
-                .first()
-                .text()
-        ) ||
-
-        cleanText(
-            $('[data-product-description]')
-                .first()
-                .text()
-        ) ||
-
-        cleanText(
-            $(".product__description")
-                .first()
-                .text()
-        ) ||
-
-        cleanText(
-            $(".product-description")
-                .first()
-                .text()
-        ) ||
-
-        null;
-
-    // =========================================================
-    // PRODUCT OFFERS
-    // =========================================================
-
-    let primaryOffer = null;
-
-    if (
-        Array.isArray(
-            productSchema?.offers
-        )
-    ) {
-        primaryOffer =
-            productSchema.offers[0] ||
-            null;
-    } else if (
-        productSchema?.offers &&
-        typeof productSchema.offers ===
-            "object"
-    ) {
-        primaryOffer =
-            productSchema.offers;
-    }
-
-    // =========================================================
-    // PRODUCT PRICE
-    // =========================================================
-
-    const schemaPrice =
-        primaryOffer?.price ??
-        null;
-
-    const domPrice =
-        $('[itemprop="price"]')
-            .first()
-            .attr("content") ||
-
-        $('[itemprop="price"]')
-            .first()
-            .text()
-            .trim() ||
-
-        $('[data-product-price]')
-            .first()
-            .attr("data-product-price") ||
-
-        $('[data-price]')
-            .first()
-            .attr("data-price") ||
-
-        $(".product__price")
-            .first()
-            .text()
-            .trim() ||
-
-        $(".product-price")
-            .first()
-            .text()
-            .trim() ||
-
-        null;
-
-    const productPrice =
-        schemaPrice ??
-        cleanText(domPrice);
-
-    // =========================================================
-    // PRODUCT COMPARE-AT PRICE
-    // =========================================================
-
-    const schemaCompareAtPrice =
-        primaryOffer
-            ?.priceSpecification
-            ?.price ??
-        null;
-
-    const domCompareAtPrice =
-        $('[data-compare-price]')
-            .first()
-            .attr(
-                "data-compare-price"
-            ) ||
-
-        $('[data-compare-at-price]')
-            .first()
-            .attr(
-                "data-compare-at-price"
-            ) ||
-
-        $(".compare-at-price")
-            .first()
-            .text()
-            .trim() ||
-
-        $(".product__compare-price")
-            .first()
-            .text()
-            .trim() ||
-
-        null;
-
-    const productCompareAtPrice =
-        schemaCompareAtPrice ??
-        cleanText(
-            domCompareAtPrice
-        );
-
-    // =========================================================
-    // PRODUCT CURRENCY
-    // =========================================================
-
-    const productCurrency =
-        primaryOffer?.priceCurrency ||
-
-        $('[itemprop="priceCurrency"]')
-            .first()
-            .attr("content") ||
-
-        $('[data-currency]')
-            .first()
-            .attr("data-currency") ||
-
-        null;
-
-    // =========================================================
-    // PRODUCT IMAGES
-    // =========================================================
-
-    const productImages = [];
-
-    if (productSchema?.image) {
-        if (
-            Array.isArray(
-                productSchema.image
-            )
-        ) {
-            productImages.push(
-                ...productSchema.image
-            );
-        } else {
-            productImages.push(
-                productSchema.image
-            );
-        }
-    }
-
-    $('[itemprop="image"]').each(
-        (_, element) => {
-            const src =
-                $(element).attr("src") ||
-                $(element).attr("content") ||
-                $(element).attr("data-src");
-
-            if (src) {
-                productImages.push(src);
+                addProductUrl(itemUrl, "jsonld");
             }
         }
+    }
+
+    return {
+        total: found.length,
+        urls: found
+    };
+};
+
+
+/* =========================================================
+   PRICE EXTRACTION
+========================================================= */
+
+const parsePrice = (value) => {
+    if (value === null || value === undefined) {
+        return null;
+    }
+
+    const cleaned = String(value)
+        .replace(/,/g, "")
+        .replace(/[^\d.-]/g, "");
+
+    if (!cleaned) {
+        return null;
+    }
+
+    const numeric = Number(cleaned);
+
+    return Number.isFinite(numeric)
+        ? numeric
+        : null;
+};
+
+const extractPriceFromText = (text = "") => {
+    const match = String(text).match(
+        /(?:[$£€₦]\s?\d[\d,]*(?:\.\d{1,2})?|\d[\d,]*(?:\.\d{1,2})?\s?(?:USD|GBP|EUR|NGN|CAD|AUD))/i
     );
 
-    $(
-        [
-            ".product__media img",
-            ".product-media img",
-            ".product-gallery img",
-            ".product__image img",
-            ".product-image img"
-        ].join(", ")
-    ).each((_, element) => {
-        const src =
-            $(element).attr("src") ||
-            $(element).attr("data-src") ||
-            $(element).attr("data-original");
+    return match ? match[0] : null;
+};
 
-        if (src) {
-            productImages.push(src);
+
+/* =========================================================
+   MAIN EXTRACTOR
+========================================================= */
+
+const extractPageData = (html, pageUrl) => {
+    const $ = cheerio.load(html || "");
+
+    /* -----------------------------------------------
+       BASIC METADATA
+    ------------------------------------------------ */
+
+    const title = cleanText(
+        $("title").first().text()
+    ) || null;
+
+    const metaDescription = cleanText(
+        $('meta[name="description"]').attr("content") ||
+        $('meta[property="og:description"]').attr("content") ||
+        ""
+    ) || null;
+
+    const canonicalUrl = normalizeUrl(
+        $('link[rel="canonical"]').attr("href") || "",
+        pageUrl
+    );
+
+    const robots = cleanText(
+        $('meta[name="robots"]').attr("content") || ""
+    ) || null;
+
+    const ogTitle = cleanText(
+        $('meta[property="og:title"]').attr("content") || ""
+    ) || null;
+
+    const ogDescription = cleanText(
+        $('meta[property="og:description"]').attr("content") || ""
+    ) || null;
+
+    const ogImage = normalizeUrl(
+        $('meta[property="og:image"]').attr("content") || "",
+        pageUrl
+    );
+
+    const ogSiteName = cleanText(
+        $('meta[property="og:site_name"]').attr("content") || ""
+    ) || null;
+
+    const htmlLanguage =
+        $("html").attr("lang") || null;
+
+    const platform = detectPlatform(
+        pageUrl,
+        html || ""
+    );
+
+    const parsedPageUrl = (() => {
+        try {
+            return new URL(pageUrl);
+        } catch {
+            return null;
+        }
+    })();
+
+    /* -----------------------------------------------
+       JSON-LD
+    ------------------------------------------------ */
+
+    const structuredDataItems = [];
+
+    $('script[type="application/ld+json"]').each((_, element) => {
+        const raw = $(element).contents().text().trim();
+
+        const parsed = parseJson(raw);
+
+        if (parsed) {
+            structuredDataItems.push(parsed);
         }
     });
 
-    const uniqueProductImages = [
-        ...new Set(
-            productImages.filter(Boolean)
-        )
-    ];
+    const structuredData = structuredDataItems.flatMap(
+        (item) => getJsonLdObjects(item, [])
+    );
 
-    // =========================================================
-    // PRODUCT AVAILABILITY
-    // =========================================================
+    const productSchema = extractProductSchema(
+        structuredData
+    );
 
-    const schemaAvailability =
-        primaryOffer?.availability ||
+    const organizationSchema =
+        extractOrganizationSchema(structuredData);
+
+    /* -----------------------------------------------
+       STORE NAME
+    ------------------------------------------------ */
+
+    let storeName =
+        ogSiteName ||
+        organizationSchema?.name ||
         null;
 
-    let productAvailable = null;
+    if (!storeName && platform === "etsy" && parsedPageUrl) {
+        const shopMatch = parsedPageUrl.pathname.match(
+            /^\/shop\/([^/]+)/i
+        );
 
-    if (schemaAvailability) {
-        const availability =
-            String(
-                schemaAvailability
-            ).toLowerCase();
-
-        if (
-            availability.includes(
-                "outofstock"
-            )
-        ) {
-            productAvailable = false;
-        } else if (
-            availability.includes(
-                "instock"
-            )
-        ) {
-            productAvailable = true;
+        if (shopMatch) {
+            storeName = decodeURIComponent(shopMatch[1])
+                .replace(/[-_]+/g, " ");
         }
     }
 
-    // =========================================================
-    // PRODUCT VARIANT SIGNALS
-    // =========================================================
+    if (!storeName && title) {
+        storeName = cleanText(
+            title.split(/\s+[|–—-]\s+/)[0]
+        ) || null;
+    }
 
-    const variantInputs = $(
-        [
-            "select[name*='option']",
-            "select[name*='variant']",
-            "input[name*='option']",
-            "input[name='id']",
-            "input[name='variant']"
-        ].join(", ")
-    ).length;
+    /* -----------------------------------------------
+       HEADINGS
+    ------------------------------------------------ */
 
-    const hasVariants =
-        variantInputs > 0;
+    const headings = {
+        h1: [],
+        h2: [],
+        h3: []
+    };
 
-    // =========================================================
-    // BODY TEXT
-    // =========================================================
+    for (const tag of ["h1", "h2", "h3"]) {
+        $(tag).each((_, element) => {
+            const text = cleanText($(element).text());
 
-    const bodyText = $("body")
-        .text()
-        .replace(/\s+/g, " ")
-        .trim();
+            if (text) {
+                headings[tag].push(text);
+            }
+        });
+    }
 
-    const bodyTextLower =
-        bodyText.toLowerCase();
+    /* -----------------------------------------------
+       IMAGES
+    ------------------------------------------------ */
 
-    // =========================================================
-    // REVIEWS
-    // =========================================================
+    const images = [];
 
-    const reviewKeywords = [
-        "reviews",
-        "review",
-        "customer reviews",
-        "customer review",
-        "ratings",
-        "rating",
-        "stars",
-        "star rating"
-    ];
+    $("img").each((_, element) => {
+        const $image = $(element);
 
-    const hasReviews =
-        reviewKeywords.some(
-            (keyword) =>
-                bodyTextLower.includes(
-                    keyword
-                )
+        const src =
+            $image.attr("src") ||
+            $image.attr("data-src") ||
+            $image.attr("data-lazy-src") ||
+            $image.attr("data-original") ||
+            null;
+
+        const normalizedSrc = src
+            ? normalizeUrl(src, pageUrl)
+            : null;
+
+        if (!normalizedSrc) {
+            return;
+        }
+
+        images.push({
+            src: normalizedSrc,
+            alt: cleanText($image.attr("alt") || ""),
+            width: $image.attr("width") || null,
+            height: $image.attr("height") || null
+        });
+    });
+
+    const uniqueImages = [];
+    const seenImages = new Set();
+
+    for (const image of images) {
+        if (seenImages.has(image.src)) {
+            continue;
+        }
+
+        seenImages.add(image.src);
+        uniqueImages.push(image);
+    }
+
+    /* -----------------------------------------------
+       LINKS
+    ------------------------------------------------ */
+
+    const links = [];
+
+    $("a[href]").each((_, element) => {
+        const $link = $(element);
+
+        const rawHref = $link.attr("href");
+
+        const href = normalizeUrl(rawHref, pageUrl);
+
+        if (!href) {
+            return;
+        }
+
+        links.push({
+            href,
+            text: cleanText($link.text()),
+            label: cleanText(
+                $link.attr("aria-label") || ""
+            ),
+            title: cleanText(
+                $link.attr("title") || ""
+            )
+        });
+    });
+
+    /* -----------------------------------------------
+       FORMS
+    ------------------------------------------------ */
+
+    const forms = [];
+
+    $("form").each((_, element) => {
+        const $form = $(element);
+
+        forms.push({
+            action: normalizeUrl(
+                $form.attr("action") || pageUrl,
+                pageUrl
+            ),
+            method: (
+                $form.attr("method") || "GET"
+            ).toUpperCase(),
+            inputs: $form.find("input").map((__, input) => ({
+                name: $(input).attr("name") || null,
+                type: $(input).attr("type") || "text",
+                required: $(input).is("[required]")
+            })).get()
+        });
+    });
+
+    /* -----------------------------------------------
+       BUTTONS
+    ------------------------------------------------ */
+
+    const buttons = [];
+
+    $("button, input[type='submit'], [role='button']").each(
+        (_, element) => {
+            const $button = $(element);
+
+            buttons.push({
+                text: cleanText(
+                    $button.text() ||
+                    $button.attr("value") ||
+                    $button.attr("aria-label") ||
+                    ""
+                ),
+                type: $button.attr("type") || null,
+                name: $button.attr("name") || null,
+                id: $button.attr("id") || null,
+                className: $button.attr("class") || null
+            });
+        }
+    );
+
+    /* -----------------------------------------------
+       PRODUCT DISCOVERY
+    ------------------------------------------------ */
+
+    const productDiscovery = discoverProductUrls(
+        $,
+        pageUrl,
+        platform,
+        structuredData
+    );
+
+    /* -----------------------------------------------
+       PRODUCT DATA
+    ------------------------------------------------ */
+
+    const schemaPrice = extractSchemaPrice(productSchema);
+
+    const schemaImages = getSchemaImageUrls(
+        productSchema?.image
+    ).map((src) => normalizeUrl(src, pageUrl))
+        .filter(Boolean);
+
+    const schemaOffers = Array.isArray(productSchema?.offers)
+        ? productSchema.offers
+        : productSchema?.offers
+            ? [productSchema.offers]
+            : [];
+
+    const schemaAvailability = schemaOffers
+        .map((offer) => offer?.availability)
+        .find(Boolean) || null;
+
+    const schemaReviews =
+        productSchema?.aggregateRating || null;
+
+    /*
+     * Etsy's listing pages commonly expose product
+     * details through metadata, JSON-LD, and visible HTML.
+     * Availability of each field depends on the page.
+     */
+
+    const productTitle =
+        cleanText(
+            productSchema?.name ||
+            $('meta[property="og:title"]').attr("content") ||
+            $('meta[name="twitter:title"]').attr("content") ||
+            $("h1").first().text() ||
+            ""
+        ) || null;
+
+    const productDescription =
+        cleanText(
+            productSchema?.description ||
+            $('meta[property="og:description"]').attr("content") ||
+            $('meta[name="description"]').attr("content") ||
+            ""
+        ) || null;
+
+    const metaPrice =
+        $('meta[property="product:price:amount"]').attr("content") ||
+        $('meta[property="og:price:amount"]').attr("content") ||
+        $('[itemprop="price"]').attr("content") ||
+        null;
+
+    const visiblePriceText =
+        extractPriceFromText(
+            $('[itemprop="price"]').first().text() ||
+            $('[data-buy-box-region]').first().text() ||
+            $("body").text().slice(0, 12000)
         );
 
-    // =========================================================
-    // SHIPPING / RETURNS
-    // =========================================================
+    const priceValue =
+        schemaPrice?.lowest ??
+        parsePrice(metaPrice) ??
+        parsePrice(visiblePriceText);
 
-    const shippingKeywords = [
-        "shipping",
-        "delivery",
-        "ships",
-        "free shipping",
-        "shipping information",
-        "delivery information"
+    const priceCurrency =
+        schemaPrice?.currency ||
+        $('meta[property="product:price:currency"]').attr("content") ||
+        $('meta[property="og:price:currency"]').attr("content") ||
+        null;
+
+    const productImages = [
+        ...schemaImages,
+        ...uniqueImages.map((image) => image.src),
+        ...(ogImage ? [ogImage] : [])
+    ].filter(Boolean);
+
+    const uniqueProductImages = [
+        ...new Set(productImages)
     ];
 
-    const returnKeywords = [
-        "returns",
-        "return policy",
-        "refund",
-        "refund policy",
-        "exchange",
-        "exchanges"
-    ];
+    const availabilityText = cleanText(
+        schemaAvailability || ""
+    );
 
-    const hasShipping =
-        shippingKeywords.some(
-            (keyword) =>
-                bodyTextLower.includes(
-                    keyword
-                )
-        );
+    const visibleBodyText = cleanText(
+        $("body").text()
+    );
 
-    const hasReturns =
-        returnKeywords.some(
-            (keyword) =>
-                bodyTextLower.includes(
-                    keyword
-                )
-        );
+    const bodyLower = visibleBodyText.toLowerCase();
 
-    // =========================================================
-    // PRODUCT DATA
-    // =========================================================
+    const availability =
+        /outofstock|soldout|sold out|currently unavailable/i.test(
+            availabilityText + " " + bodyLower.slice(0, 10000)
+        )
+            ? "unavailable"
+            : /instock|in stock|available/i.test(
+                availabilityText
+            )
+                ? "available"
+                : null;
+
+    const reviewCount = Number(
+        schemaReviews?.reviewCount ??
+        schemaReviews?.ratingCount ??
+        0
+    ) || null;
+
+    const ratingValue = Number(
+        schemaReviews?.ratingValue ?? 0
+    ) || null;
 
     const product = {
         title: productTitle,
+        description: productDescription,
 
-        description:
-            productDescription,
+        price: priceValue !== null && priceValue !== undefined
+            ? priceValue
+            : null,
 
-        descriptionLength:
-            productDescription?.length || 0,
+        compareAtPrice: null,
 
-        price:
-            productPrice,
+        currency: priceCurrency,
 
-        compareAtPrice:
-            productCompareAtPrice,
+        images: uniqueProductImages,
 
-        currency:
-            productCurrency,
+        availability,
 
-        images: {
-            total:
-                uniqueProductImages.length,
+        hasVariants: Boolean(
+            productSchema?.offers &&
+            Array.isArray(productSchema.offers) &&
+            productSchema.offers.length > 1
+        ),
 
-            items:
-                uniqueProductImages
+        hasProductSchema: Boolean(productSchema),
+
+        reviews: {
+            count: reviewCount,
+            rating: ratingValue
         },
 
-        availability:
-            productAvailable,
+        shipping: {
+            mentioned: /shipping|delivery/i.test(bodyLower)
+        },
 
-        hasVariants,
+        returns: {
+            mentioned: /return policy|returns accepted|return an item/i.test(
+                bodyLower
+            )
+        }
+    };
 
-        hasReviews,
+    /* -----------------------------------------------
+       PLATFORM-SPECIFIC SIGNALS
+    ------------------------------------------------ */
 
-        hasShipping,
+    const lowerHtml = String(html || "").toLowerCase();
 
-        hasReturns,
+    const shopifySignalNames = [
+        "cdn.shopify.com",
+        "cdn.shopifycdn.net",
+        "shopify-payment-button",
+        "/cdn/shop/",
+        "shopify-section",
+        "shopifyanalytics",
+        "shopify.routes"
+    ];
+
+    const matchedShopifySignals =
+        shopifySignalNames.filter((signal) =>
+            lowerHtml.includes(signal)
+        );
+
+    const platformSignals = {
+        shopify: matchedShopifySignals,
+        shopifySignalCount: matchedShopifySignals.length,
+        etsy: platform === "etsy"
+    };
+
+    const isEtsyListing = isEtsyListingUrl(pageUrl);
+
+    const isShopifyProduct =
+        platform === "shopify" &&
+        parsedPageUrl &&
+        isProductPath(parsedPageUrl.pathname);
+
+    const addToCartSignals = [
+        /add to cart/i.test(visibleBodyText),
+        /add to basket/i.test(visibleBodyText),
+        /buy it now/i.test(visibleBodyText),
+        /add to bag/i.test(visibleBodyText)
+    ].filter(Boolean).length;
+
+    const hasShopifyProductForm =
+        $("form[action*='/cart/add']").length > 0 ||
+        $("form[action*='cart/add']").length > 0;
+
+    const hasShopifyBuyNow =
+        $("shopify-payment-button").length > 0 ||
+        $(".shopify-payment-button").length > 0;
+
+    const hasEtsyPurchaseControls =
+        isEtsyListing &&
+        (
+            /add to cart|buy it now|add to basket/i.test(
+                visibleBodyText
+            ) ||
+            $("[data-buy-box-region]").length > 0
+        );
+
+    const signals = {
+        addToCart: addToCartSignals > 0,
+        addToCartSignalCount: addToCartSignals,
+
+        shopifyProductForm:
+            Boolean(hasShopifyProductForm),
+
+        shopifyBuyNow:
+            Boolean(hasShopifyBuyNow),
+
+        etsyPurchaseControls:
+            Boolean(hasEtsyPurchaseControls),
+
+        reviewsMentioned:
+            /review|reviews|ratings/i.test(bodyLower),
+
+        shippingMentioned:
+            /shipping|delivery/i.test(bodyLower),
+
+        returnsMentioned:
+            /returns accepted|return policy|returns policy/i.test(
+                bodyLower
+            ),
+
+        productPage:
+            Boolean(isEtsyListing || isShopifyProduct),
 
         hasProductSchema:
             Boolean(productSchema)
     };
 
-    // =========================================================
-    // BASIC STORE SIGNALS
-    // =========================================================
+    /* -----------------------------------------------
+       SEO
+    ------------------------------------------------ */
 
-    const hasEmailCapture =
-        $("input[type='email']")
-            .length > 0;
+    const seo = {
+        title,
+        metaDescription,
+        canonicalUrl,
+        robots,
+        language: htmlLanguage,
 
-    const hasContactForm =
-        forms.length > 0;
+        titleLength: title
+            ? title.length
+            : 0,
 
-    // =========================================================
-    // PURCHASE / ADD TO CART DETECTION
-    // =========================================================
+        descriptionLength: metaDescription
+            ? metaDescription.length
+            : 0,
 
-    const addToCartKeywords = [
-        "add to cart",
-        "add to bag",
-        "add bag",
-        "buy now",
-        "purchase",
-        "shop now",
-        "in den warenkorb",
-        "in den einkaufswagen",
-        "jetzt kaufen",
-        "ajouter au panier",
-        "añadir al carrito",
-        "agregar al carrito",
-        "adicionar ao carrinho"
-    ];
+        hasTitle: Boolean(title),
+        hasMetaDescription: Boolean(metaDescription),
+        hasCanonical: Boolean(canonicalUrl),
 
-    const isPurchaseText = (
-        text = ""
-    ) => {
-        const normalized =
-            text
-                .replace(/\s+/g, " ")
-                .trim()
-                .toLowerCase();
-
-        return addToCartKeywords.some(
-            (keyword) =>
-                normalized.includes(
-                    keyword
-                )
-        );
+        openGraph: {
+            title: ogTitle,
+            description: ogDescription,
+            image: ogImage,
+            siteName: ogSiteName
+        }
     };
 
-    // =========================================================
-    // TEXT-BASED CTA DETECTION
-    // =========================================================
-
-    const purchaseButtons = $(
-        "button, input[type='submit'], input[type='button'], a"
-    )
-        .filter((_, element) => {
-            const text =
-                $(element).text() ||
-                $(element).attr("value") ||
-                $(element).attr("aria-label") ||
-                $(element).attr("title") ||
-                "";
-
-            return isPurchaseText(text);
-        })
-        .length;
-
-    // =========================================================
-    // SHOPIFY PRODUCT FORM
-    // =========================================================
-
-    const productForms = $(
-        "form[action*='/cart/add'], form[action*='/cart/add.js']"
-    ).length;
-
-    // =========================================================
-    // SHOPIFY ADD BUTTON
-    // =========================================================
-
-    const shopifyAddButtons = $(
-        [
-            "button[name='add']",
-            "input[name='add']",
-            "button[data-add-to-cart]",
-            "[data-add-to-cart]",
-            ".add-to-cart",
-            ".add-to-cart-button",
-            ".product-form__submit",
-            "[name='add']"
-        ].join(", ")
-    ).length;
-
-    // =========================================================
-    // PRODUCT FORM SUBMIT
-    // =========================================================
-
-    const productFormSubmitButtons = $(
-        "form[action*='/cart/add'] button[type='submit'], " +
-        "form[action*='/cart/add'] input[type='submit']"
-    ).length;
-
-    // =========================================================
-    // BUY NOW / DYNAMIC CHECKOUT
-    // =========================================================
-
-    const buyNowButtons = $(
-        [
-            "[data-buy-now]",
-            ".shopify-payment-button",
-            ".shopify-payment-button__button",
-            "[name='checkout']"
-        ].join(", ")
-    ).length;
-
-    // =========================================================
-    // FINAL PURCHASE DECISION
-    // =========================================================
-
-    const hasProductForm =
-        productForms > 0;
-
-    const hasAddToCart =
-        purchaseButtons > 0 ||
-        productForms > 0 ||
-        shopifyAddButtons > 0 ||
-        productFormSubmitButtons > 0;
-
-    const hasBuyNow =
-        buyNowButtons > 0;
-
-    const purchaseCtaCount =
-        purchaseButtons +
-        shopifyAddButtons +
-        productFormSubmitButtons +
-        buyNowButtons;
-
-    // =========================================================
-    // FINAL STORE NAME
-    // =========================================================
-
-    const storeName =
-        openGraphSiteName ||
-        organizationName ||
-        cleanText(title) ||
-        null;
-
-    // =========================================================
-    // RETURN
-    // =========================================================
+    /* -----------------------------------------------
+       FINAL RESULT
+    ------------------------------------------------ */
 
     return {
         url: pageUrl,
 
         storeName,
 
-        // =====================================================
-        // PLATFORM
-        // =====================================================
-
         platform,
 
-        platformSignals: {
-            shopify: shopifySignals,
-            shopifySignalCount
-        },
+        platformSignals,
 
-        // =====================================================
-        // SEO
-        // =====================================================
-
-        seo: {
-            title,
-
-            titleLength:
-                title.length,
-
-            metaDescription,
-
-            metaDescriptionLength:
-                metaDescription?.length || 0,
-
-            canonical,
-
-            robots
-        },
-
-        // =====================================================
-        // PRODUCT
-        // =====================================================
+        seo,
 
         product,
 
-        // =====================================================
-        // PRODUCT DISCOVERY
-        // =====================================================
-
-        productDiscovery: {
-            total:
-                discoveredProductUrls.length,
-
-            urls:
-                discoveredProductUrls
-        },
-
-        // =====================================================
-        // HEADINGS
-        // =====================================================
+        productDiscovery,
 
         headings,
 
-        // =====================================================
-        // IMAGES
-        // =====================================================
-
         images: {
-            total:
-                images.length,
+            total: uniqueImages.length,
 
-            withoutAlt:
-                imagesWithoutAlt.length,
+            withoutAlt: uniqueImages.filter(
+                (image) => !image.alt
+            ).length,
 
-            items:
-                images
+            items: uniqueImages
         },
-
-        // =====================================================
-        // LINKS
-        // =====================================================
 
         links: {
-            total:
-                links.length,
-
-            items:
-                links
+            total: links.length,
+            items: links
         },
-
-        // =====================================================
-        // FORMS
-        // =====================================================
 
         forms: {
-            total:
-                forms.length,
-
-            items:
-                forms
+            total: forms.length,
+            items: forms
         },
-
-        // =====================================================
-        // BUTTONS
-        // =====================================================
 
         buttons: {
-            total:
-                buttons.length,
-
-            items:
-                buttons
+            total: buttons.length,
+            items: buttons
         },
 
-        // =====================================================
-        // OPEN GRAPH
-        // =====================================================
-
-        openGraph,
-
-        // =====================================================
-        // STRUCTURED DATA
-        // =====================================================
+        openGraph: {
+            title: ogTitle,
+            description: ogDescription,
+            image: ogImage,
+            siteName: ogSiteName
+        },
 
         structuredData: {
-            count:
-                structuredData.length,
-
-            items:
-                structuredData,
+            count: structuredData.length,
 
             hasProductSchema:
                 Boolean(productSchema),
 
-            product:
-                productSchema
+            product: productSchema,
+
+            organization:
+                organizationSchema,
+
+            items: structuredData
         },
 
-        // =====================================================
-        // SIGNALS
-        // =====================================================
-
-        signals: {
-            hasEmailCapture,
-
-            hasContactForm,
-
-            hasAddToCart,
-
-            hasBuyNow,
-
-            hasProductForm,
-
-            purchaseCtaCount,
-
-            purchaseSignals: {
-                purchaseButtons,
-
-                productForms,
-
-                shopifyAddButtons,
-
-                productFormSubmitButtons,
-
-                buyNowButtons
-            }
-        },
-
-        // =====================================================
-        // BODY
-        // =====================================================
+        signals,
 
         bodyTextLength:
-            bodyText.length
+            visibleBodyText.length
     };
 };
 
+
+/* =========================================================
+   EXPORT
+========================================================= */
+
 module.exports = {
-    extractPageData
+    extractPageData,
+
+    normalizeUrl,
+    isSameDomain,
+
+    isProductPath,
+    isGiftCardUrl,
+
+    isEtsyHost,
+    isEtsyShopUrl,
+    isEtsyListingUrl,
+
+    detectPlatform
 };

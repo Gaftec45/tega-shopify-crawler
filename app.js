@@ -11,6 +11,9 @@ const crawlerRoutes = require("./routes/crawler.routes");
 const productCrawlerRoutes = require("./routes/product.crawler.routes");
 const auditRoutes = require("./routes/audit.routes");
 const publicReportRoutes = require("./routes/public.report.routes");
+const competitorScanRoutes = require("./routes/competitorScan.routes");
+const competitorHistoryRoutes = require("./routes/competitorHistory.routes");
+const competitorDashboardRoutes = require("./routes/competitorDashboard.routes");
 
 const app = express();
 
@@ -54,6 +57,11 @@ app.use("/api/audits", auditRoutes);
 
 app.use("/api/audits", publicReportRoutes);
 
+app.use("/api/competitors", competitorScanRoutes);
+
+app.use("/api/competitors", competitorHistoryRoutes);
+
+app.use("/api/competitors", competitorDashboardRoutes);
 
 // ========================================
 // 404

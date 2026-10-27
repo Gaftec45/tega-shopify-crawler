@@ -1,35 +1,104 @@
+const axios = require("axios");
 const mongoose = require("mongoose");
 const crypto = require("crypto");
 const Audit = require("../models/audit.model");
+const { getIntelSettings } = require("../services/main/intelSettingsService");
+
 const {
     reserveAuditCredits,
     commitAuditCredits,
-    releaseAuditCredits
+    releaseAuditCredits,
+    checkIntelAnalysisQuota,
 } = require("../services/main/mainApiService");
 
+const MAIN_AUDIT_COST = 8;
+const INTEL_MODE = "intel";
 
-const getUserAudits1 = async (req, res) => {
+// ========================================
+// HELPERS
+// ========================================
+
+const isIntelAudit = (audit) =>
+    audit.productMode === INTEL_MODE;
+
+const isAuditUnlocked = (audit) => {
+    // Intel users do not need to unlock audits with regular credits.
+    if (isIntelAudit(audit)) {
+        return true;
+    }
+
+    return audit.isUnlocked === true;
+};
+
+const safeContact = (audit, unlocked) => ({
+    totalEmails: Number(audit.contact?.totalEmails || 0),
+    emails: unlocked ? audit.contact?.emails || [] : [],
+    primaryEmail: unlocked
+        ? audit.contact?.primaryEmail || null
+        : null,
+    pagesCrawled: unlocked ? audit.contact?.pagesCrawled || [] : []
+});
+
+// ========================================
+// GET USER AUDITS
+// GET /api/audits/user
+// ========================================
+
+const getUserAudits = async (req, res) => {
     try {
-            const audits = await Audit.find({
-                user: {
-                    $exists: true,
-                    $eq: req.user.id
-                }
-            })
-            .select(
-                "storeUrl requestedUrl finalUrl storeName status score productsFound progress currentStep error createdAt updatedAt"
-            )
-            .sort({
-                createdAt: -1
-            })
-            .limit(2);
+        const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+        const limit = Math.min(
+            Math.max(parseInt(req.query.limit, 10) || 5, 1),
+            50
+        );
+        const skip = (page - 1) * limit;
+        const filter = { user: req.user.id };
+
+        const [audits, total] = await Promise.all([
+            Audit.find(filter)
+                .select(
+                    "_id user productMode storeUrl requestedUrl finalUrl storeName status score productsFound progress currentStep progressMessage error isUnlocked createdAt updatedAt contact"
+                )
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limit)
+                .lean(),
+            Audit.countDocuments(filter)
+        ]);
+
+        const data = audits.map((audit) => {
+            const unlocked = isAuditUnlocked(audit);
+
+            return {
+                _id: audit._id,
+                productMode: audit.productMode || "main",
+                storeUrl: audit.storeUrl,
+                requestedUrl: audit.requestedUrl,
+                finalUrl: audit.finalUrl,
+                storeName: audit.storeName,
+                status: audit.status,
+                score: audit.score,
+                productsFound: audit.productsFound,
+                progress: audit.progress,
+                currentStep: audit.currentStep,
+                progressMessage: audit.progressMessage,
+                error: audit.error,
+                isUnlocked: unlocked,
+                contact: safeContact(audit, unlocked),
+                createdAt: audit.createdAt,
+                updatedAt: audit.updatedAt
+            };
+        });
 
         return res.status(200).json({
             success: true,
-            count: audits.length,
-            data: audits
+            count: data.length,
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
+            data
         });
-
     } catch (error) {
         console.error("Get user audits error:", error);
 
@@ -41,138 +110,10 @@ const getUserAudits1 = async (req, res) => {
     }
 };
 
-const getUserAudits = async (req, res) => {
-    try {
-        const page = Math.max(
-            parseInt(req.query.page) || 1,
-            1
-        );
-
-        const limit = Math.min(
-            Math.max(
-                parseInt(req.query.limit) || 5,
-                1
-            ),
-            50
-        );
-
-        const skip = (page - 1) * limit;
-
-        const filter = {
-            user: req.user.id
-        };
-
-        const [audits, total] = await Promise.all([
-            Audit.find(filter)
-                .select(
-                    "_id user storeUrl requestedUrl finalUrl storeName status score productsFound progress currentStep progressMessage error isUnlocked createdAt updatedAt contact"
-                )
-                .sort({
-                    createdAt: -1
-                })
-                .skip(skip)
-                .limit(limit)
-                .lean(),
-
-            Audit.countDocuments(filter)
-        ]);
-
-        const safeAudits = audits.map((audit) => {
-            const unlocked =
-                audit.isUnlocked === true;
-
-            return {
-                _id: audit._id,
-
-                storeUrl:
-                    audit.storeUrl,
-
-                requestedUrl:
-                    audit.requestedUrl,
-
-                finalUrl:
-                    audit.finalUrl,
-
-                storeName:
-                    audit.storeName,
-
-                status:
-                    audit.status,
-
-                score:
-                    audit.score,
-
-                productsFound:
-                    audit.productsFound,
-
-                progress:
-                    audit.progress,
-
-                currentStep:
-                    audit.currentStep,
-
-                progressMessage:
-                    audit.progressMessage,
-
-                error:
-                    audit.error,
-
-                isUnlocked:
-                    unlocked,
-
-                contact: {
-                    totalEmails:
-                        Number(
-                            audit.contact?.totalEmails || 0
-                        ),
-
-                    // Don't expose actual emails here
-                    emails: unlocked
-                        ? audit.contact?.emails || []
-                        : [],
-
-                    primaryEmail: unlocked
-                        ? audit.contact?.primaryEmail || null
-                        : null,
-
-                    pagesCrawled: unlocked
-                        ? audit.contact?.pagesCrawled || []
-                        : []
-                },
-
-                createdAt:
-                    audit.createdAt,
-
-                updatedAt:
-                    audit.updatedAt
-            };
-        });
-
-        return res.status(200).json({
-            success: true,
-            count: safeAudits.length,
-            total,
-            page,
-            limit,
-            totalPages:
-                Math.ceil(total / limit),
-            data: safeAudits
-        });
-
-    } catch (error) {
-        console.error(
-            "Get user audits error:",
-            error
-        );
-
-        return res.status(500).json({
-            success: false,
-            message:
-                "Failed to retrieve audits",
-            error: error.message
-        });
-    }
-};
+// ========================================
+// GET SINGLE AUDIT
+// GET /api/audits/:id
+// ========================================
 
 const getAuditById = async (req, res) => {
     try {
@@ -197,72 +138,36 @@ const getAuditById = async (req, res) => {
             });
         }
 
-        const unlocked = audit.isUnlocked === true;
+        const unlocked = isAuditUnlocked(audit);
 
-        const response = {
+        const data = {
             _id: audit._id,
+            productMode: audit.productMode || "main",
             storeUrl: audit.storeUrl,
             requestedUrl: audit.requestedUrl,
             finalUrl: audit.finalUrl,
             storeName: audit.storeName,
-
             status: audit.status,
-
             progress: audit.progress,
             currentStep: audit.currentStep,
             progressMessage: audit.progressMessage,
-
             productsFound: audit.productsFound,
-
             score: audit.score,
-
             createdAt: audit.createdAt,
             updatedAt: audit.updatedAt,
-
             isUnlocked: unlocked,
-
-            // Useful for the frontend
-            contact: {
-                totalEmails:
-                    Number(audit.contact?.totalEmails || 0),
-
-            pagesCrawled: unlocked
-                ? audit.contact?.pagesCrawled || []
-                : [],
-
-                // NEVER expose emails while locked
-                emails: unlocked
-                    ? audit.contact?.emails || []
-                    : [],
-
-                primaryEmail: unlocked
-                    ? audit.contact?.primaryEmail || null
-                    : null
-            }
+            contact: safeContact(audit, unlocked)
         };
 
-        // Only expose detailed audit data after unlock
         if (unlocked) {
-            response.deterministicAudit =
-                audit.deterministicAudit || null;
-
-            response.aiAudit =
-                audit.aiAudit || null;
-
-            response.crawl =
-                audit.crawl || null;
+            data.deterministicAudit = audit.deterministicAudit || null;
+            data.aiAudit = audit.aiAudit || null;
+            data.crawl = audit.crawl || null;
         }
 
-        return res.status(200).json({
-            success: true,
-            data: response
-        });
-
+        return res.status(200).json({ success: true, data });
     } catch (error) {
-        console.error(
-            "Get audit error:",
-            error
-        );
+        console.error("Get audit error:", error);
 
         return res.status(500).json({
             success: false,
@@ -272,6 +177,10 @@ const getAuditById = async (req, res) => {
     }
 };
 
+// ========================================
+// GET AUDIT REPORT
+// GET /api/audits/:id/report
+// ========================================
 
 const getAuditReport = async (req, res) => {
     try {
@@ -296,83 +205,32 @@ const getAuditReport = async (req, res) => {
             });
         }
 
-        const unlocked =
-            audit.isUnlocked === true;
+        const unlocked = isAuditUnlocked(audit);
 
         const data = {
             id: audit._id,
-
+            productMode: audit.productMode || "main",
             storeUrl: audit.storeUrl,
-
-            requestedUrl:
-                audit.requestedUrl,
-
-            finalUrl:
-                audit.finalUrl,
-
-            storeName:
-                audit.storeName,
-
-            status:
-                audit.status,
-
-            score:
-                audit.score,
-
-            isUnlocked:
-                unlocked,
-
-            contact: {
-                totalEmails:
-                    Number(
-                        audit.contact?.totalEmails || 0
-                    ),
-
-            pagesCrawled: unlocked
-                ? audit.contact?.pagesCrawled || []
-                : [],
-
-                emails: unlocked
-                    ? audit.contact?.emails || []
-                    : [],
-
-                primaryEmail: unlocked
-                    ? audit.contact?.primaryEmail || null
-                    : null
-            },
-
-            createdAt:
-                audit.createdAt,
-
-            updatedAt:
-                audit.updatedAt
+            requestedUrl: audit.requestedUrl,
+            finalUrl: audit.finalUrl,
+            storeName: audit.storeName,
+            status: audit.status,
+            score: audit.score,
+            isUnlocked: unlocked,
+            contact: safeContact(audit, unlocked),
+            createdAt: audit.createdAt,
+            updatedAt: audit.updatedAt
         };
 
-        /*
-         * Full report data is only returned
-         * after the audit has been unlocked.
-         */
         if (unlocked) {
-            data.deterministicAudit =
-                audit.deterministicAudit || null;
-
-            data.aiAudit =
-                audit.aiAudit || null;
-
-            data.crawl =
-                audit.crawl || null;
+            data.deterministicAudit = audit.deterministicAudit || null;
+            data.aiAudit = audit.aiAudit || null;
+            data.crawl = audit.crawl || null;
         }
 
-        return res.status(200).json({
-            success: true,
-            data
-        });
-
+        return res.status(200).json({ success: true, data });
     } catch (error) {
-        console.error(
-            "Get audit report error:",
-            error
-        );
+        console.error("Get audit report error:", error);
 
         return res.status(500).json({
             success: false,
@@ -382,417 +240,89 @@ const getAuditReport = async (req, res) => {
     }
 };
 
-// const analyzeAudit = async (req, res) => {
-//     try {
-//         const { id } = req.params;
 
-//         // --------------------------------
-//         // VALIDATE AUDIT ID
-//         // --------------------------------
-
-//         if (!mongoose.Types.ObjectId.isValid(id)) {
-//             return res.status(400).json({
-//                 success: false,
-//                 message: "Invalid audit ID"
-//             });
-//         }
-
-//         // --------------------------------
-//         // FIND USER'S AUDIT
-//         // --------------------------------
-
-//         const audit = await Audit.findOne({
-//             _id: id,
-//             user: req.user.id
-//         });
-
-//         if (!audit) {
-//             return res.status(404).json({
-//                 success: false,
-//                 message: "Audit not found"
-//             });
-//         }
-
-//         // --------------------------------
-//         // MAKE SURE CRAWL + DETERMINISTIC
-//         // ANALYSIS ARE COMPLETE
-//         // --------------------------------
-
-//         if (
-//             !audit.crawl ||
-//             !audit.deterministicAudit
-//         ) {
-//             return res.status(400).json({
-//                 success: false,
-//                 message:
-//                     "Audit must be crawled and analyzed before AI analysis"
-//             });
-//         }
-
-//         // --------------------------------
-//         // PREVENT DUPLICATE AI PROCESSING
-//         // --------------------------------
-
-//         if (audit.status === "ai_processing") {
-//             return res.status(409).json({
-//                 success: false,
-//                 message:
-//                     "AI analysis is already in progress"
-//             });
-//         }
-
-//         // --------------------------------
-//         // AI ALREADY COMPLETED
-//         // --------------------------------
-
-//         if (
-//             audit.status === "completed" &&
-//             audit.aiAudit
-//         ) {
-//             return res.status(200).json({
-//                 success: true,
-//                 message:
-//                     "AI analysis already completed",
-//                 data: {
-//                     auditId: audit._id,
-//                     status: audit.status,
-//                     progress: audit.progress,
-//                     currentStep: audit.currentStep,
-//                     progressMessage:
-//                         audit.progressMessage,
-//                     score: audit.score,
-//                     aiAudit: audit.aiAudit
-//                 }
-//             });
-//         }
-
-//         // --------------------------------
-//         // START AI PROCESSING
-//         // --------------------------------
-//         //
-//         // Deterministic audit should already
-//         // be around 70%.
-//         //
-
-//         audit.status = "ai_processing";
-
-//         audit.progress = 75;
-
-//         audit.currentStep =
-//             "building_ai_payload";
-
-//         audit.progressMessage =
-//             "Preparing audit data for AI...";
-
-//         audit.error = null;
-
-//         await audit.save();
-
-//         // --------------------------------
-//         // LOAD AI SERVICES
-//         // --------------------------------
-
-//         const {
-//             buildAiAuditPayload
-//         } = require("../services/ai/audit.payload");
-
-//         const {
-//             buildAuditPrompt
-//         } = require("../services/ai/audit.prompt");
-
-//         const {
-//             analyzeWithOpenRouter
-//         } = require("../services/ai/openrouter.service");
-
-//         // --------------------------------
-//         // BUILD AI PAYLOAD
-//         // --------------------------------
-
-//         console.log(
-//             `Building AI payload for audit: ${audit._id}`
-//         );
-
-//         const aiPayload =
-//             buildAiAuditPayload(
-//                 audit.crawl,
-//                 audit.deterministicAudit
-//             );
-
-//         audit.progress = 78;
-
-//         audit.currentStep =
-//             "building_ai_prompt";
-
-//         audit.progressMessage =
-//             "Preparing AI analysis...";
-
-//         await audit.save();
-
-//         // --------------------------------
-//         // BUILD AI PROMPT
-//         // --------------------------------
-
-//         console.log(
-//             `Building AI prompt for audit: ${audit._id}`
-//         );
-
-//         const {
-//             systemPrompt,
-//             userPrompt
-//         } = buildAuditPrompt(
-//             aiPayload
-//         );
-
-//         audit.progress = 80;
-
-//         audit.currentStep =
-//             "ai_processing";
-
-//         audit.progressMessage =
-//             "AI is analyzing your store...";
-
-//         await audit.save();
-
-//         // --------------------------------
-//         // OPENROUTER
-//         // --------------------------------
-
-//         console.log(
-//             `Sending audit to OpenRouter: ${audit._id}`
-//         );
-
-//         const aiAudit =
-//             await analyzeWithOpenRouter({
-//                 systemPrompt,
-//                 userPrompt
-//             });
-
-//         // --------------------------------
-//         // AI RESPONSE RECEIVED
-//         // --------------------------------
-
-//         console.log(
-//             `AI response received for audit: ${audit._id}`
-//         );
-
-//         audit.aiAudit =
-//             aiAudit;
-
-//         audit.progress = 95;
-
-//         audit.currentStep =
-//             "analysis_completed";
-
-//         audit.progressMessage =
-//             "AI analysis completed. Preparing your report...";
-
-//         await audit.save();
-
-//         // --------------------------------
-//         // COMPLETE AUDIT
-//         // --------------------------------
-
-//         audit.status =
-//             "completed";
-
-//         audit.progress =
-//             100;
-
-//         audit.currentStep =
-//             "completed";
-
-//         audit.progressMessage =
-//             "Audit completed successfully.";
-
-//         audit.error =
-//             null;
-
-//         await audit.save();
-
-//         console.log(
-//             `AI analysis completed: ${audit._id}`
-//         );
-
-//         // --------------------------------
-//         // RESPONSE
-//         // --------------------------------
-
-//         return res.status(200).json({
-//             success: true,
-
-//             message:
-//                 "AI analysis completed successfully",
-
-//             data: {
-//                 auditId: audit._id,
-//                 status: audit.status,
-//                 progress: audit.progress,
-//                 currentStep: audit.currentStep,
-//                 progressMessage:
-//                     audit.progressMessage,
-//                 score: audit.score,
-//                 aiAudit: audit.aiAudit
-//             }
-//         });
-
-//     } catch (error) {
-
-//         console.error(
-//             "AI analysis error:",
-//             error
-//         );
-
-//         // --------------------------------
-//         // AI FAILED
-//         // --------------------------------
-//         //
-//         // Keep the crawl and deterministic
-//         // audit. Only reset the AI stage.
-//         //
-
-//         try {
-//             const { id } = req.params;
-
-//             if (
-//                 mongoose.Types.ObjectId.isValid(id)
-//             ) {
-//                 await Audit.findOneAndUpdate(
-//                     {
-//                         _id: id,
-//                         user: req.user.id
-//                     },
-//                     {
-//                         status: "crawled",
-
-//                         progress: 70,
-
-//                         currentStep:
-//                             "ai_failed",
-
-//                         progressMessage:
-//                             "AI analysis failed. Your store audit is still available.",
-
-//                         error:
-//                             error.message
-//                     }
-//                 );
-//             }
-
-//         } catch (saveError) {
-
-//             console.error(
-//                 "Failed to save AI error:",
-//                 saveError
-//             );
-//         }
-
-//         return res.status(500).json({
-//             success: false,
-
-//             message:
-//                 "AI analysis failed",
-
-//             error:
-//                 error.message
-//         });
-//     }
-// };
+// ========================================
+// ANALYZE AUDIT
+// Main: charge 8 credits.
+// Intelligence: no credits; enforce monthly AI quota.
+// ========================================
 
 
 const analyzeAudit = async (req, res) => {
     let reservationId = null;
     let aiSucceeded = false;
+    let audit = null;
+    let intelMode = false;
 
     try {
         const { id } = req.params;
 
-        // ========================================
-        // VALIDATE AUDIT ID
-        // ========================================
-
         if (!mongoose.Types.ObjectId.isValid(id)) {
             return res.status(400).json({
                 success: false,
-                message: "Invalid audit ID",
+                message: "Invalid audit ID"
             });
         }
 
-        // ========================================
-        // FIND AUDIT
-        // ========================================
-
         const existingAudit = await Audit.findOne({
             _id: id,
-            user: req.user.id,
+            user: req.user.id
         });
 
         if (!existingAudit) {
             return res.status(404).json({
                 success: false,
-                message: "Audit not found",
+                message: "Audit not found"
             });
         }
 
-        // ========================================
-        // ALREADY UNLOCKED
-        // ========================================
+        intelMode = isIntelAudit(existingAudit);
 
+        if (intelMode) {
+            existingAudit.isUnlocked = true;
+            existingAudit.creditStatus = "not_required";
+            existingAudit.creditReservationId = null;
+            await existingAudit.save();
+        }
+
+        // Return an existing completed report without charging again.
         if (
-            existingAudit.isUnlocked === true &&
             existingAudit.status === "completed" &&
-            existingAudit.aiAudit
+            existingAudit.aiAudit &&
+            (intelMode || existingAudit.isUnlocked === true)
         ) {
             return res.status(200).json({
                 success: true,
-                message: "Full audit already unlocked",
+                message: intelMode
+                    ? "Intelligence analysis already completed"
+                    : "Full audit already unlocked",
                 data: {
-                    auditId:
-                        existingAudit._id,
-
-                    status:
-                        existingAudit.status,
-
-                    progress:
-                        existingAudit.progress,
-
-                    currentStep:
-                        existingAudit.currentStep,
-
-                    progressMessage:
-                        existingAudit.progressMessage,
-
-                    score:
-                        existingAudit.score,
-
-                    isUnlocked:
-                        true,
-
-                    aiAudit:
-                        existingAudit.aiAudit,
-                },
+                    auditId: existingAudit._id,
+                    status: existingAudit.status,
+                    progress: existingAudit.progress,
+                    currentStep: existingAudit.currentStep,
+                    progressMessage: existingAudit.progressMessage,
+                    score: existingAudit.score,
+                    isUnlocked: true,
+                    aiAudit: existingAudit.aiAudit,
+                    ...(intelMode
+                        ? {}
+                        : { creditsUsed: MAIN_AUDIT_COST })
+                }
             });
         }
 
-        // ========================================
-        // AI COMPLETED BUT CREDIT COMMIT PENDING
-        // ========================================
-
         if (
-            existingAudit.creditStatus ===
-                "commit_pending" &&
+            !intelMode &&
+            existingAudit.creditStatus === "commit_pending" &&
             existingAudit.aiAudit
         ) {
             return res.status(409).json({
                 success: false,
                 message:
-                    "AI analysis completed, but credit finalization is still pending. Please try again shortly.",
+                    "AI analysis completed, but credit finalization is pending. Please try again shortly."
             });
         }
-
-        // ========================================
-        // MAKE SURE CRAWL + DETERMINISTIC AUDIT
-        // ARE COMPLETE
-        // ========================================
 
         if (
             !existingAudit.crawl ||
@@ -801,74 +331,38 @@ const analyzeAudit = async (req, res) => {
             return res.status(400).json({
                 success: false,
                 message:
-                    "Audit must be crawled and analyzed before AI analysis",
+                    "Audit must be crawled and analyzed before AI analysis"
             });
         }
 
-        // ========================================
-        // HANDLE EXISTING AI PROCESS
-        // ========================================
+        // Recover stale processing attempts.
+        if (existingAudit.status === "ai_processing") {
+            const startedAt = existingAudit.aiProcessingStartedAt;
 
-        if (
-            existingAudit.status ===
-            "ai_processing"
-        ) {
-            const startedAt =
-                existingAudit.aiProcessingStartedAt;
-
-            const processingTime = startedAt
-                ? Date.now() -
-                  new Date(startedAt).getTime()
+            const elapsed = startedAt
+                ? Date.now() - new Date(startedAt).getTime()
                 : 0;
 
-            const MAX_PROCESSING_TIME =
-                10 * 60 * 1000;
+            const MAX_PROCESSING_TIME = 10 * 60 * 1000;
 
-            // ------------------------------------
-            // STILL PROCESSING
-            // ------------------------------------
-
-            if (
-                startedAt &&
-                processingTime <
-                    MAX_PROCESSING_TIME
-            ) {
+            if (startedAt && elapsed < MAX_PROCESSING_TIME) {
                 return res.status(409).json({
                     success: false,
-                    message:
-                        "AI analysis is already in progress",
+                    message: "AI analysis is already in progress"
                 });
             }
 
-            // ------------------------------------
-            // STALE PROCESS
-            // ------------------------------------
-
-            console.warn(
-                `Stale AI process detected for audit: ${id}`
-            );
-
-            // ------------------------------------
-            // RELEASE STALE RESERVATION
-            // ------------------------------------
-
             if (
+                !intelMode &&
                 existingAudit.creditReservationId &&
-                existingAudit.creditStatus ===
-                    "reserved"
+                existingAudit.creditStatus === "reserved"
             ) {
                 try {
                     await releaseAuditCredits({
                         reservationId:
                             existingAudit.creditReservationId,
-
-                        reason:
-                            "Stale AI analysis process recovered",
+                        reason: "Stale AI analysis process recovered"
                     });
-
-                    console.log(
-                        `Released stale credit reservation: ${existingAudit.creditReservationId}`
-                    );
                 } catch (releaseError) {
                     console.error(
                         "Failed to release stale reservation:",
@@ -878,702 +372,363 @@ const analyzeAudit = async (req, res) => {
                     return res.status(500).json({
                         success: false,
                         message:
-                            "The previous AI analysis is stuck and its credit reservation could not be released. Please try again.",
+                            "The previous analysis is stuck and its credit reservation could not be released."
                     });
                 }
             }
 
-            // ------------------------------------
-            // RESET AUDIT
-            // ------------------------------------
-
-            existingAudit.status =
-                "crawled";
-
-            existingAudit.progress =
-                70;
-
-            existingAudit.currentStep =
-                "ready_for_ai";
-
+            existingAudit.status = "crawled";
+            existingAudit.progress = 70;
+            existingAudit.currentStep = "ready_for_ai";
             existingAudit.progressMessage =
                 "Previous AI analysis stopped unexpectedly. You can try again.";
-
-            existingAudit.aiProcessingStartedAt =
-                null;
-
-            existingAudit.creditReservationId =
-                null;
-
-            existingAudit.creditStatus =
-                "not_required";
-
-            existingAudit.error =
-                null;
-
-            existingAudit.isUnlocked =
-                false;
+            existingAudit.aiProcessingStartedAt = null;
+            existingAudit.error = null;
+            existingAudit.isUnlocked = intelMode;
+            existingAudit.creditReservationId = null;
+            existingAudit.creditStatus = "not_required";
 
             await existingAudit.save();
 
             return res.status(409).json({
                 success: false,
                 message:
-                    "The previous AI analysis timed out. Please click Unlock Full Audit again.",
+                    "The previous AI analysis timed out. Please try again."
             });
         }
 
-        // ========================================
-        // ATOMICALLY CLAIM AI PROCESSING
-        // ========================================
+        // Intel: verify subscription and monthly quota.
+        // Do not run an Intel analysis if quota verification fails.
+        if (intelMode) {
+            let quota;
 
-        const audit =
-            await Audit.findOneAndUpdate(
-                {
-                    _id: id,
+            try {
+                quota = await checkIntelAnalysisQuota(
+                    req.headers.authorization
+                );
+            } catch (quotaError) {
+                console.error(
+                    "Intel quota verification failed:",
+                    quotaError.response?.data || quotaError.message
+                );
 
-                    user: req.user.id,
+                return res.status(503).json({
+                    success: false,
+                    code: "INTEL_QUOTA_CHECK_UNAVAILABLE",
+                    message:
+                        "We could not verify your Intel subscription usage. Please try again shortly."
+                });
+            }
 
-                    status: "crawled",
+            if (!quota.allowed) {
+                const limitReached =
+                    quota.used !== undefined &&
+                    quota.limit !== undefined;
 
-                    $or: [
-                        {
-                            aiAudit: {
-                                $exists: false,
-                            },
-                        },
-                        {
-                            aiAudit: null,
-                        },
-                    ],
-                },
+                return res.status(limitReached ? 429 : 403).json({
+                    success: false,
+                    code: limitReached
+                        ? "INTEL_ANALYSIS_LIMIT_REACHED"
+                        : "INTEL_SUBSCRIPTION_REQUIRED",
+                    message: quota.reason,
+                    usage: {
+                        used: quota.used ?? null,
+                        limit: quota.limit ?? null,
+                        remaining: quota.remaining ?? null
+                    }
+                });
+            }
+        }
 
-                {
-                    $set: {
-                        status:
-                            "ai_processing",
-
-                        aiProcessingStartedAt:
-                            new Date(),
-
-                        progress: 75,
-
-                        currentStep:
-                            "building_ai_payload",
-
-                        progressMessage:
-                            "Preparing audit data for AI...",
-
-                        error: null,
-                    },
-                },
-
-                {
-                    returnDocument:
-                        "after",
+        // Atomically claim the audit to prevent duplicate processing.
+        audit = await Audit.findOneAndUpdate(
+            {
+                _id: id,
+                user: req.user.id,
+                status: "crawled",
+                $or: [
+                    { aiAudit: { $exists: false } },
+                    { aiAudit: null }
+                ]
+            },
+            {
+                $set: {
+                    status: "ai_processing",
+                    aiProcessingStartedAt: new Date(),
+                    progress: 75,
+                    currentStep: "building_ai_payload",
+                    progressMessage: "Preparing audit data for AI...",
+                    error: null
                 }
-            );
-
-        // ========================================
-        // AUDIT WAS ALREADY CLAIMED
-        // ========================================
+            },
+            { new: true }
+        );
 
         if (!audit) {
-            const latestAudit =
-                await Audit.findOne({
-                    _id: id,
-                    user: req.user.id,
-                });
-
-            if (!latestAudit) {
-                return res.status(404).json({
-                    success: false,
-                    message: "Audit not found",
-                });
-            }
-
-            // ------------------------------------
-            // ALREADY UNLOCKED
-            // ------------------------------------
+            const latest = await Audit.findOne({
+                _id: id,
+                user: req.user.id
+            });
 
             if (
-                latestAudit.isUnlocked === true &&
-                latestAudit.status ===
-                    "completed" &&
-                latestAudit.aiAudit
+                latest &&
+                latest.status === "completed" &&
+                latest.aiAudit &&
+                (isIntelAudit(latest) || latest.isUnlocked === true)
             ) {
+                const latestIntelMode = isIntelAudit(latest);
+
                 return res.status(200).json({
                     success: true,
-                    message:
-                        "Full audit already unlocked",
+                    message: latestIntelMode
+                        ? "Intelligence analysis already completed"
+                        : "Full audit already unlocked",
                     data: {
-                        auditId:
-                            latestAudit._id,
-
-                        status:
-                            latestAudit.status,
-
-                        progress:
-                            latestAudit.progress,
-
-                        currentStep:
-                            latestAudit.currentStep,
-
-                        progressMessage:
-                            latestAudit.progressMessage,
-
-                        score:
-                            latestAudit.score,
-
-                        isUnlocked:
-                            true,
-
-                        aiAudit:
-                            latestAudit.aiAudit,
-                    },
+                        auditId: latest._id,
+                        status: latest.status,
+                        progress: latest.progress,
+                        currentStep: latest.currentStep,
+                        progressMessage: latest.progressMessage,
+                        score: latest.score,
+                        isUnlocked: true,
+                        aiAudit: latest.aiAudit,
+                        ...(latestIntelMode
+                            ? {}
+                            : { creditsUsed: MAIN_AUDIT_COST })
+                    }
                 });
             }
-
-            // ------------------------------------
-            // PROCESSING
-            // ------------------------------------
-
-            if (
-                latestAudit.status ===
-                "ai_processing"
-            ) {
-                return res.status(409).json({
-                    success: false,
-                    message:
-                        "AI analysis is already in progress",
-                });
-            }
-
-            // ------------------------------------
-            // NOT AVAILABLE
-            // ------------------------------------
 
             return res.status(409).json({
                 success: false,
                 message:
-                    "Audit is not currently available for unlocking",
+                    "Audit is already processing or is not available for analysis"
             });
         }
 
-        console.log(
-            `AI processing claimed successfully: ${audit._id}`
-        );
+        intelMode = isIntelAudit(audit);
 
-        // ========================================
-        // RESERVE 8 CREDITS
-        // ========================================
-
-        console.log(
-            `Reserving AI credits for audit: ${audit._id}`
-        );
-
-        const reservation =
-            await reserveAuditCredits({
-                userId:
-                    req.user.id,
-
-                amount:
-                    8,
-
-                feature:
-                    "full_audit_unlock",
-
-                reference:
-                    `audit-unlock-${audit._id}`,
-
-                description:
-                    "Full Shopify audit unlock and AI analysis",
-
+        // Reserve credits for Main audits only.
+        if (!intelMode) {
+            const reservation = await reserveAuditCredits({
+                userId: req.user.id,
+                amount: MAIN_AUDIT_COST,
+                feature: "full_audit_unlock",
+                reference: `audit-unlock-${audit._id}`,
+                description: "Full Shopify audit unlock and AI analysis",
                 metadata: {
-                    auditId:
-                        audit._id.toString(),
-
-                    auditUrl:
-                        audit.storeUrl ||
-                        audit.url ||
-                        null,
-                },
+                    auditId: audit._id.toString(),
+                    auditUrl: audit.storeUrl || audit.url || null
+                }
             });
 
-        reservationId =
-            reservation.reservation.id;
+            reservationId = reservation?.reservation?.id;
 
-        // ========================================
-        // SAVE CREDIT RESERVATION
-        // ========================================
+            if (!reservationId) {
+                throw new Error(
+                    "Credit reservation did not return a reservation ID"
+                );
+            }
 
-        audit.creditReservationId =
-            reservationId;
+            audit.creditReservationId = reservationId;
+            audit.creditStatus = "reserved";
+        } else {
+            audit.creditReservationId = null;
+            audit.creditStatus = "not_required";
+        }
 
-        audit.creditStatus =
-            "reserved";
-
-        audit.isUnlocked =
-            false;
-
+        audit.isUnlocked = intelMode;
         await audit.save();
 
-        console.log(
-            `AI credits reserved: ${reservationId}`
+        // Load AI services.
+        const { buildAiAuditPayload } = require(
+            "../services/ai/audit.payload"
         );
 
-        // ========================================
-        // LOAD AI SERVICES
-        // ========================================
-
-        const {
-            buildAiAuditPayload,
-        } =
-            require(
-                "../services/ai/audit.payload"
-            );
-
-        const {
-            buildAuditPrompt,
-        } =
-            require(
-                "../services/ai/audit.prompt"
-            );
-
-        const {
-            analyzeWithOpenRouter,
-        } =
-            require(
-                "../services/ai/openrouter.service"
-            );
-
-        // ========================================
-        // BUILD AI PAYLOAD
-        // ========================================
-
-        console.log(
-            `Building AI payload for audit: ${audit._id}`
+        const { buildAuditPrompt } = require(
+            "../services/ai/audit.prompt"
         );
 
-        const aiPayload =
-            buildAiAuditPayload(
-                audit.crawl,
-                audit.deterministicAudit
-            );
+        const { analyzeWithOpenRouter } = require(
+            "../services/ai/openrouter.service"
+        );
 
-        audit.progress =
-            78;
+        // Build the audit payload.
+        const aiPayload = buildAiAuditPayload(
+            audit.crawl,
+            audit.deterministicAudit
+        );
 
-        audit.currentStep =
-            "building_ai_prompt";
-
-        audit.progressMessage =
-            "Preparing AI analysis...";
-
+        audit.progress = 78;
+        audit.currentStep = "building_ai_prompt";
+        audit.progressMessage = "Preparing AI analysis...";
         await audit.save();
 
-        // ========================================
-        // BUILD AI PROMPT
-        // ========================================
+        // NEW: Load saved preferences for Intel audits only.
+        let intelSettings = null;
 
-        console.log(
-            `Building AI prompt for audit: ${audit._id}`
-        );
+        if (intelMode) {
+            try {
+                intelSettings = await getIntelSettings(
+                    req.headers.authorization
+                );
+            } catch (settingsError) {
+                console.error(
+                    "Failed to load Intel settings; using default preferences:",
+                    settingsError.response?.data || settingsError.message
+                );
+            }
+        }
 
-        const {
+        // Main uses the original prompt behavior.
+        // Intel applies the saved preferences in audit.prompt.js.
+        const { systemPrompt, userPrompt } = intelMode
+            ? buildAuditPrompt(aiPayload, intelSettings)
+            : buildAuditPrompt(aiPayload);
+
+        audit.progress = 80;
+        audit.currentStep = "ai_processing";
+        audit.progressMessage = "AI is analyzing your store...";
+        await audit.save();
+
+        // Run AI analysis.
+        const aiAudit = await analyzeWithOpenRouter({
             systemPrompt,
-            userPrompt,
-        } =
-            buildAuditPrompt(
-                aiPayload
-            );
-
-        audit.progress =
-            80;
-
-        audit.currentStep =
-            "ai_processing";
-
-        audit.progressMessage =
-            "AI is analyzing your store...";
-
-        await audit.save();
-
-        // ========================================
-        // OPENROUTER
-        // ========================================
-
-        console.log(
-            `Sending audit to OpenRouter: ${audit._id}`
-        );
-
-        const aiAudit =
-            await analyzeWithOpenRouter({
-                systemPrompt,
-                userPrompt,
-            });
-
-        // ========================================
-        // AI SUCCEEDED
-        // ========================================
-
-        aiSucceeded =
-            true;
-
-        console.log(
-            `AI response received for audit: ${audit._id}`
-        );
-
-        // ========================================
-        // SAVE AI RESULT
-        // ========================================
-
-        audit.aiAudit =
-            aiAudit;
-
-        audit.progress =
-            95;
-
-        audit.currentStep =
-            "analysis_completed";
-
-        audit.progressMessage =
-            "AI analysis completed. Finalizing credits...";
-
-        audit.creditStatus =
-            "commit_pending";
-
-        // IMPORTANT:
-        // Still locked at this point.
-        audit.isUnlocked =
-            false;
-
-        await audit.save();
-
-        // ========================================
-        // COMMIT CREDITS
-        // ========================================
-
-        console.log(
-            `Committing AI credits for audit: ${audit._id}`
-        );
-
-        await commitAuditCredits({
-            reservationId,
+            userPrompt
         });
 
-        console.log(
-            `AI credits committed: ${reservationId}`
-        );
+        aiSucceeded = true;
 
-        // ========================================
-        // FINALIZE + UNLOCK AUDIT
-        // ========================================
+        // Save AI output before finalizing Main credits.
+        audit.aiAudit = aiAudit;
+        audit.progress = 95;
+        audit.currentStep = "analysis_completed";
+        audit.progressMessage = intelMode
+            ? "Intelligence analysis completed. Preparing your report..."
+            : "AI analysis completed. Finalizing credits...";
 
-        audit.creditStatus =
-            "committed";
-
-        audit.isUnlocked =
-            true;
-
-        audit.status =
-            "completed";
-
-        audit.progress =
-            100;
-
-        audit.currentStep =
-            "completed";
-
-        audit.progressMessage =
-            "Full audit unlocked successfully.";
-
-        audit.aiProcessingStartedAt =
-            null;
-
-        audit.creditReservationId =
-            reservationId;
-
-        audit.error =
-            null;
+        if (intelMode) {
+            audit.creditStatus = "not_required";
+            audit.creditReservationId = null;
+            audit.isUnlocked = true;
+        } else {
+            audit.creditStatus = "commit_pending";
+            audit.isUnlocked = false;
+        }
 
         await audit.save();
 
-        console.log(
-            `Full audit unlocked: ${audit._id}`
-        );
+        // Commit credits for Main audits only.
+        if (!intelMode) {
+            await commitAuditCredits({ reservationId });
 
-        // ========================================
-        // RESPONSE
-        // ========================================
+            audit.creditStatus = "committed";
+            audit.creditReservationId = reservationId;
+        }
+
+        // Mark analysis as completed.
+        audit.isUnlocked = true;
+        audit.aiCompletedAt = new Date();
+        audit.status = "completed";
+        audit.progress = 100;
+        audit.currentStep = "completed";
+        audit.progressMessage = intelMode
+            ? "Intelligence report is ready."
+            : "Full audit unlocked successfully.";
+        audit.aiProcessingStartedAt = null;
+        audit.error = null;
+
+        await audit.save();
 
         return res.status(200).json({
             success: true,
-
-            message:
-                "Full audit unlocked successfully",
-
+            message: intelMode
+                ? "Intelligence analysis completed successfully"
+                : "Full audit unlocked successfully",
             data: {
-                auditId:
-                    audit._id,
-
-                status:
-                    audit.status,
-
-                progress:
-                    audit.progress,
-
-                currentStep:
-                    audit.currentStep,
-
-                progressMessage:
-                    audit.progressMessage,
-
-                score:
-                    audit.score,
-
-                isUnlocked:
-                    true,
-
-                aiAudit:
-                    audit.aiAudit,
-
-                creditsUsed:
-                    8,
-            },
+                auditId: audit._id,
+                status: audit.status,
+                progress: audit.progress,
+                currentStep: audit.currentStep,
+                progressMessage: audit.progressMessage,
+                score: audit.score,
+                isUnlocked: true,
+                aiAudit: audit.aiAudit,
+                ...(intelMode
+                    ? {}
+                    : { creditsUsed: MAIN_AUDIT_COST })
+            }
         });
-
     } catch (error) {
+        console.error("AI analysis error:", error);
 
-        console.error(
-            "AI analysis error:",
-            error
-        );
-
-        // ========================================
-        // CREDIT HANDLING
-        // ========================================
-
-        if (reservationId) {
+        // Release reserved Main credits if AI did not succeed.
+        if (reservationId && !aiSucceeded) {
             try {
-
-                // ====================================
-                // AI DID NOT SUCCEED
-                // ====================================
-
-                if (!aiSucceeded) {
-
-                    console.log(
-                        `AI failed. Releasing credits: ${reservationId}`
-                    );
-
-                    await releaseAuditCredits({
-                        reservationId,
-
-                        reason:
-                            error.message ||
-                            "AI analysis failed",
-                    });
-
-                    console.log(
-                        `AI credits released: ${reservationId}`
-                    );
-
-                    await Audit.findOneAndUpdate(
-                        {
-                            _id:
-                                req.params.id,
-
-                            user:
-                                req.user.id,
-                        },
-
-                        {
-                            $set: {
-                                status:
-                                    "crawled",
-
-                                progress:
-                                    70,
-
-                                currentStep:
-                                    "ready_for_ai",
-
-                                progressMessage:
-                                    "AI analysis failed. Your store audit is still available.",
-
-                                error:
-                                    error.message,
-
-                                aiProcessingStartedAt:
-                                    null,
-
-                                creditReservationId:
-                                    null,
-
-                                creditStatus:
-                                    "not_required",
-
-                                isUnlocked:
-                                    false,
-                            },
-                        },
-
-                        {
-                            returnDocument:
-                                "after",
-                        }
-                    );
-                }
-
-                // ====================================
-                // AI SUCCEEDED BUT CREDIT COMMIT FAILED
-                // ====================================
-
-                else {
-
-                    console.error(
-                        `AI succeeded but credit commit failed. Reservation remains pending: ${reservationId}`
-                    );
-
-                    await Audit.findOneAndUpdate(
-                        {
-                            _id:
-                                req.params.id,
-
-                            user:
-                                req.user.id,
-                        },
-
-                        {
-                            $set: {
-                                status:
-                                    "ai_processing",
-
-                                creditStatus:
-                                    "commit_pending",
-
-                                isUnlocked:
-                                    false,
-
-                                currentStep:
-                                    "credit_commit_pending",
-
-                                progress:
-                                    95,
-
-                                progressMessage:
-                                    "AI analysis completed. Finalizing billing...",
-
-                                error:
-                                    `Credit commit requires retry: ${error.message}`,
-                            },
-                        },
-
-                        {
-                            returnDocument:
-                                "after",
-                        }
-                    );
-                }
-
-            } catch (creditError) {
-
+                await releaseAuditCredits({
+                    reservationId,
+                    reason: error.message || "AI analysis failed"
+                });
+            } catch (releaseError) {
                 console.error(
-                    "Credit finalization error:",
-                    creditError
+                    "Failed to release audit credits:",
+                    releaseError
                 );
             }
         }
 
-        // ========================================
-        // RESET AI STAGE ONLY IF AI FAILED
-        // ========================================
+        try {
+            const failedAudit =
+                audit ||
+                await Audit.findOne({
+                    _id: req.params.id,
+                    user: req.user.id
+                });
 
-        if (!aiSucceeded) {
+            if (failedAudit) {
+                const failedIsIntel = isIntelAudit(failedAudit);
 
-            try {
-
-                const { id } =
-                    req.params;
-
-                if (
-                    mongoose.Types.ObjectId.isValid(
-                        id
-                    )
-                ) {
-
-                    await Audit.findOneAndUpdate(
-                        {
-                            _id: id,
-                            user: req.user.id,
-                        },
-
-                        {
-                            $set: {
-                                status:
-                                    "crawled",
-
-                                progress:
-                                    70,
-
-                                currentStep:
-                                    "ready_for_ai",
-
-                                progressMessage:
-                                    "AI analysis failed. Your store audit is still available.",
-
-                                error:
-                                    error.message,
-
-                                aiProcessingStartedAt:
-                                    null,
-
-                                creditReservationId:
-                                    null,
-
-                                creditStatus:
-                                    "not_required",
-
-                                isUnlocked:
-                                    false,
-                            },
-                        },
-
-                        {
-                            returnDocument:
-                                "after",
-                        }
-                    );
+                if (aiSucceeded && !failedIsIntel) {
+                    // AI succeeded, but Main credit commitment failed.
+                    failedAudit.status = "ai_processing";
+                    failedAudit.creditStatus = "commit_pending";
+                    failedAudit.isUnlocked = false;
+                    failedAudit.currentStep = "credit_commit_pending";
+                    failedAudit.progress = 95;
+                    failedAudit.progressMessage =
+                        "AI analysis completed. Credit finalization is pending.";
+                    failedAudit.error =
+                        `Credit commit requires retry: ${error.message}`;
+                } else if (!aiSucceeded) {
+                    // Keep the audit retryable if AI processing failed.
+                    failedAudit.status = "crawled";
+                    failedAudit.progress = 70;
+                    failedAudit.currentStep = "ready_for_ai";
+                    failedAudit.progressMessage =
+                        "AI analysis failed. Your store audit is still available.";
+                    failedAudit.error = error.message;
+                    failedAudit.aiProcessingStartedAt = null;
+                    failedAudit.isUnlocked = failedIsIntel;
+                    failedAudit.creditStatus = "not_required";
+                    failedAudit.creditReservationId = null;
                 }
 
-            } catch (saveError) {
-
-                console.error(
-                    "Failed to save AI error:",
-                    saveError
-                );
+                await failedAudit.save();
             }
+        } catch (saveError) {
+            console.error("Failed to save AI error:", saveError);
         }
-
-        // ========================================
-        // ERROR RESPONSE
-        // ========================================
 
         return res.status(500).json({
             success: false,
-
-            message:
-                "AI analysis failed",
-
-            error:
-                error.message,
+            message: "AI analysis failed",
+            error: error.message
         });
     }
 };
 
 // ========================================
-// GENERATE PUBLIC REPORT
+// CREATE PUBLIC REPORT
 // POST /api/audits/:id/share
 // ========================================
 
@@ -1600,19 +755,20 @@ const createPublicReport = async (req, res) => {
             });
         }
 
-        // Only completed audits can be shared
-        if (
-            audit.status !== "completed" ||
-            !audit.aiAudit
-        ) {
+        if (audit.status !== "completed" || !audit.aiAudit) {
             return res.status(400).json({
                 success: false,
-                message:
-                    "Only completed audits can be shared"
+                message: "Only completed audits can be shared"
             });
         }
 
-        // Reuse existing public link
+        if (!isAuditUnlocked(audit)) {
+            return res.status(403).json({
+                success: false,
+                message: "Unlock this audit before sharing its report"
+            });
+        }
+
         if (
             audit.publicReport?.enabled &&
             audit.publicReport?.token
@@ -1621,19 +777,14 @@ const createPublicReport = async (req, res) => {
                 success: true,
                 message: "Public report already exists",
                 data: {
-                    token:
-                        audit.publicReport.token,
-                    enabled:
-                        audit.publicReport.enabled,
-                    createdAt:
-                        audit.publicReport.createdAt
+                    token: audit.publicReport.token,
+                    enabled: audit.publicReport.enabled,
+                    createdAt: audit.publicReport.createdAt
                 }
             });
         }
 
-        // Generate secure random token
-        const token =
-            crypto.randomBytes(16).toString("hex");
+        const token = crypto.randomBytes(16).toString("hex");
 
         audit.publicReport = {
             enabled: true,
@@ -1645,35 +796,27 @@ const createPublicReport = async (req, res) => {
 
         return res.status(201).json({
             success: true,
-            message:
-                "Public report created successfully",
+            message: "Public report created successfully",
             data: {
                 token,
                 enabled: true,
-                createdAt:
-                    audit.publicReport.createdAt
+                createdAt: audit.publicReport.createdAt
             }
         });
-
     } catch (error) {
-        console.error(
-            "Create public report error:",
-            error
-        );
+        console.error("Create public report error:", error);
 
         return res.status(500).json({
             success: false,
-            message:
-                "Failed to create public report",
+            message: "Failed to create public report",
             error: error.message
         });
     }
 };
 
-
 // ========================================
 // GET PUBLIC REPORT
-// GET /api/public/:token
+// GET /api/audits/public/:token
 // NO AUTHENTICATION
 // ========================================
 
@@ -1697,10 +840,13 @@ const getPublicReport = async (req, res) => {
             "publicReport.enabled": true,
             status: "completed"
         }).select(
-            "storeUrl requestedUrl finalUrl storeName status score aiAudit createdAt updatedAt publicReport"
+            "productMode storeUrl requestedUrl finalUrl storeName status score aiAudit createdAt updatedAt publicReport isUnlocked"
         );
 
-        if (!audit) {
+        if (
+            !audit ||
+            (!isIntelAudit(audit) && audit.isUnlocked !== true)
+        ) {
             return res.status(404).json({
                 success: false,
                 message:
@@ -1710,57 +856,30 @@ const getPublicReport = async (req, res) => {
 
         return res.status(200).json({
             success: true,
-
             data: {
                 id: audit._id,
-
-                storeUrl:
-                    audit.storeUrl,
-
-                requestedUrl:
-                    audit.requestedUrl,
-
-                finalUrl:
-                    audit.finalUrl,
-
-                storeName:
-                    audit.storeName,
-
-                status:
-                    audit.status,
-
-                score:
-                    audit.score,
-
-                aiAudit:
-                    audit.aiAudit,
-
-                createdAt:
-                    audit.createdAt,
-
-                updatedAt:
-                    audit.updatedAt,
-
-                sharedAt:
-                    audit.publicReport.createdAt
+                storeUrl: audit.storeUrl,
+                requestedUrl: audit.requestedUrl,
+                finalUrl: audit.finalUrl,
+                storeName: audit.storeName,
+                status: audit.status,
+                score: audit.score,
+                aiAudit: audit.aiAudit,
+                createdAt: audit.createdAt,
+                updatedAt: audit.updatedAt,
+                sharedAt: audit.publicReport.createdAt
             }
         });
-
     } catch (error) {
-        console.error(
-            "Get public report error:",
-            error
-        );
+        console.error("Get public report error:", error);
 
         return res.status(500).json({
             success: false,
-            message:
-                "Failed to retrieve public report",
+            message: "Failed to retrieve public report",
             error: error.message
         });
     }
 };
-
 
 // ========================================
 // REVOKE PUBLIC REPORT
@@ -1790,27 +909,26 @@ const revokePublicReport = async (req, res) => {
             });
         }
 
-        audit.publicReport.enabled =
-            false;
+        if (!audit.publicReport) {
+            return res.status(400).json({
+                success: false,
+                message: "This audit has no public report"
+            });
+        }
 
+        audit.publicReport.enabled = false;
         await audit.save();
 
         return res.status(200).json({
             success: true,
-            message:
-                "Public report link revoked"
+            message: "Public report link revoked"
         });
-
     } catch (error) {
-        console.error(
-            "Revoke public report error:",
-            error
-        );
+        console.error("Revoke public report error:", error);
 
         return res.status(500).json({
             success: false,
-            message:
-                "Failed to revoke public report",
+            message: "Failed to revoke public report",
             error: error.message
         });
     }

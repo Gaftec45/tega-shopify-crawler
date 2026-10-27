@@ -1,4 +1,82 @@
-const buildAuditPrompt = (payload) => {
+
+const buildAuditPrompt = (payload, settings = null) => {
+    const hasIntelSettings =
+        settings && typeof settings === "object" && !Array.isArray(settings);
+
+    const aiFocusOptions = {
+        sales_growth: "Sales growth",
+        seo: "SEO",
+        conversion: "Conversion optimization",
+        product_opportunities: "Product opportunities",
+        store_performance: "Store performance"
+    };
+
+    const focusLabels = Array.isArray(settings?.aiFocus)
+        ? settings.aiFocus
+            .map((focus) => aiFocusOptions[focus])
+            .filter(Boolean)
+        : [];
+
+    const insightDetail = {
+        concise: "Keep analysis especially concise and focus on the most important findings.",
+        balanced: "Balance concise findings with enough detail to explain the evidence and recommended actions.",
+        detailed: "Provide more explanatory detail while respecting every output word limit."
+    };
+
+    const recommendationPriority = {
+        quick_wins: "Prioritize practical changes the store owner can implement quickly.",
+        long_term: "Prioritize sustainable improvements and longer-term growth opportunities.",
+        both: "Balance immediate improvements with sustainable, longer-term growth opportunities."
+    };
+
+    const researchFocus = {
+        all: "Consider all relevant areas supported by the supplied audit evidence.",
+        demand: "Emphasize product demand only where the supplied evidence supports a conclusion. Do not invent market demand data.",
+        pricing: "Emphasize pricing-related findings only where supplied evidence supports them. Do not invent competitor prices or market benchmarks.",
+        positioning: "Emphasize store and product positioning only where supplied evidence supports it. Do not invent customer or market research."
+    };
+
+    const preferenceInstructions = hasIntelSettings
+        ? `
+INTEL USER PREFERENCES:
+Apply these preferences when selecting, explaining, and ordering findings. They must NEVER override the supplied evidence, the output schema, or the audit safety rules.
+
+AI FOCUS:
+${focusLabels.length ? focusLabels.join(", ") : "Use all relevant audit areas supported by the data."}
+
+INSIGHT DETAIL:
+${insightDetail[settings.insightDetail] || insightDetail.balanced}
+
+RECOMMENDATION PRIORITY:
+${recommendationPriority[settings.recommendationPriority] || recommendationPriority.both}
+
+MARKET RESEARCH PREFERENCES:
+Target market: ${
+            typeof settings.targetMarket === "string" && settings.targetMarket.trim()
+                ? settings.targetMarket.trim()
+                : "Not specified"
+        }
+Preferred currency: ${
+            typeof settings.currency === "string" && settings.currency.trim()
+                ? settings.currency
+                : "USD"
+        }
+Product niche: ${
+            typeof settings.productNiche === "string" && settings.productNiche.trim()
+                ? settings.productNiche.trim()
+                : "Not specified"
+        }
+Research focus: ${researchFocus[settings.researchFocus] || researchFocus.all}
+
+IMPORTANT:
+- Target market, currency, niche, and research focus are preferences, not evidence.
+- Do not claim to have researched the market, validated demand, or checked competitor pricing unless that data is supplied.
+- Do not convert prices or invent local market benchmarks.
+- Use preferences to tailor recommendations only when relevant to the supplied audit.
+- Monitoring and notification settings control application behavior; they do not create evidence in this audit.
+`
+        : "";
+
     const systemPrompt = `
 You are a Shopify e-commerce auditor.
 
@@ -29,6 +107,8 @@ PRODUCT EVIDENCE RULES:
 - "description.present": true means a product description was detected on that sampled product.
 - Do not infer missing prices unless the supplied pricing data explicitly shows no price was detected.
 - Do not treat an empty Shopify API result as proof that the product has no price or purchase functionality if HTML evidence provides otherwise.
+
+${preferenceInstructions}
 
 Return ONLY valid JSON. No markdown. No explanation outside JSON.
 

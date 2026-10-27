@@ -146,10 +146,125 @@ const getAuditLeadStatus = async ({
     return response.data;
 };
 
+
+const getVerifiedCompetitor = async ({ userId, competitorId }) => {
+  const response = await mainAPI.get(
+    `/internal/competitors/${encodeURIComponent(competitorId)}`,
+    {
+      params: { userId },
+    }
+  );
+
+  return response.data.competitor;
+};
+
+const updateCompetitorLastCheckedAt = async ({
+  userId,
+  competitorId,
+  lastCheckedAt,
+}) => {
+  const response = await mainAPI.patch(
+    `/internal/competitors/${encodeURIComponent(
+      competitorId
+    )}/last-checked`,
+    {
+      userId,
+      lastCheckedAt,
+    }
+  );
+
+  return response.data;
+};
+
+const getVerifiedCompetitors = async ({ userId }) => {
+    const response = await mainAPI.get("/internal/competitors", {
+        params: { userId },
+    });
+
+    return response.data.competitors;
+};
+
+const checkIntelAnalysisQuota = async (authorization) => {
+    if (!authorization || !authorization.startsWith("Bearer ")) {
+        throw new Error("Missing authorization token");
+    }
+
+    const baseURL = MAIN_API_URL.replace(/\/+$/, "");
+
+    const response = await axios.get(
+        `${baseURL}/subscription/status`,
+        {
+            headers: {
+                Authorization: authorization,
+            },
+            timeout: 15000,
+        }
+    );
+
+    const data = response.data;
+
+    if (
+        !data ||
+        data.productMode !== "intel" ||
+        data.active !== true ||
+        data.activated !== true
+    ) {
+        return {
+            allowed: false,
+            reason: "An active Intel subscription is required.",
+        };
+    }
+
+    const limit = data.limits?.aiAnalysesPerMonth;
+    const used = data.usage?.aiAnalyses?.used;
+    const remaining = data.usage?.aiAnalyses?.remaining;
+
+    // Fail closed if usage cannot be verified.
+    if (
+        typeof used !== "number" ||
+        !Number.isFinite(used) ||
+        used < 0
+    ) {
+        throw new Error("Intel analysis usage could not be verified");
+    }
+
+    if (
+        limit !== null &&
+        limit !== undefined &&
+        (!Number.isFinite(limit) || limit < 0)
+    ) {
+        throw new Error("Intel analysis limit is invalid");
+    }
+
+    if (limit === 0 || (limit != null && used >= limit)) {
+        return {
+            allowed: false,
+            reason: "Your Intel analysis limit has been reached.",
+            used,
+            limit,
+            remaining: 0,
+        };
+    }
+
+    return {
+        allowed: true,
+        reason: "Intel analysis is available.",
+        used,
+        limit: limit ?? null,
+        remaining: remaining ?? (
+            limit == null ? null : Math.max(0, limit - used)
+        ),
+    };
+};
+
 module.exports = {
     reserveAuditCredits,
     commitAuditCredits,
     releaseAuditCredits,
     createLeadFromAudit,
     getAuditLeadStatus,
+    getVerifiedCompetitor,
+    updateCompetitorLastCheckedAt,
+    getVerifiedCompetitors,
+    checkIntelAnalysisQuota,
 };

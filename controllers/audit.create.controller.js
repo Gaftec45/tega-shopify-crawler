@@ -1,3 +1,4 @@
+
 const Audit = require("../models/audit.model");
 
 const {
@@ -8,144 +9,81 @@ const {
     validateStoreUrl
 } = require("../utils/url.security");
 
-
-const createAudit = async (req, res) => {
-
+const createAuditForMode = async (req, res, productMode) => {
     try {
-
         const { storeUrl } = req.body;
 
-
-        // --------------------------------
-        // REQUIRED URL
-        // --------------------------------
-
+        // Validate required URL
         if (!storeUrl) {
-
             return res.status(400).json({
                 success: false,
                 message: "storeUrl is required"
             });
-
         }
 
-
-        // --------------------------------
-        // URL SECURITY VALIDATION
-        // --------------------------------
-
-        const validation =
-            await validateStoreUrl(
-                storeUrl
-            );
-
+        // Validate URL security
+        const validation = await validateStoreUrl(storeUrl);
 
         if (!validation.valid) {
-
             return res.status(400).json({
                 success: false,
-                message:
-                    validation.message
+                message: validation.message
             });
-
         }
 
+        const url = validation.url;
 
-        const url =
-            validation.url;
-
-
-        // --------------------------------
-        // CREATE AUDIT
-        // --------------------------------
-
-        const audit =
-            await Audit.create({
-                user: req.user.id,
-                storeUrl:
-                    url.toString(),
-
-                requestedUrl:
-                    url.toString(),
-
-                status: "pending",
-
-                progress: 0,
-
-                currentStep: "queued"
-            });
-
+        // Create audit with the correct product mode
+        const audit = await Audit.create({
+            user: req.user.id,
+            productMode,
+            storeUrl: url.toString(),
+            requestedUrl: url.toString(),
+            status: "pending",
+            progress: 0,
+            currentStep: "queued"
+        });
 
         console.log(
-            `Audit created: ${audit._id}`
+            `Audit created: ${audit._id} | Product: ${productMode}`
         );
 
-
-        // --------------------------------
-        // START BACKGROUND PROCESS
-        // --------------------------------
-
-        processAudit(
-            audit._id
-        ).catch((error) => {
-
-            console.error(
-                "Background audit error:",
-                error
-            );
-
+        // Start background processing
+        processAudit(audit._id).catch((error) => {
+            console.error("Background audit error:", error);
         });
 
-
-        // --------------------------------
-        // RETURN IMMEDIATELY
-        // --------------------------------
-
+        // Return immediately
         return res.status(202).json({
-
             success: true,
-
-            message:
-                "Audit started successfully",
-
-            auditId:
-                audit._id,
-
-            status:
-                audit.status,
-
-            progress:
-                audit.progress,
-
-            currentStep:
-                audit.currentStep
+            message: "Audit started successfully",
+            auditId: audit._id,
+            status: audit.status,
+            progress: audit.progress,
+            currentStep: audit.currentStep
         });
-
-
     } catch (error) {
-
-        console.error(
-            "Create audit error:",
-            error
-        );
-
+        console.error("Create audit error:", error);
 
         return res.status(500).json({
-
             success: false,
-
-            message:
-                "Failed to start audit",
-
-            error:
-                error.message
-
+            message: "Failed to start audit",
+            error: error.message
         });
-
     }
 };
 
+// Main TegaScout — existing credit-based flow
+const createAudit = (req, res) => {
+    return createAuditForMode(req, res, "main");
+};
+
+// TegaScout Intelligence — separate no-credit flow
+const createIntelAudit = (req, res) => {
+    return createAuditForMode(req, res, "intel");
+};
 
 module.exports = {
-    createAudit
+    createAudit,
+    createIntelAudit
 };

@@ -12,6 +12,23 @@ const auditSchema = new mongoose.Schema(
             index: true,
         },
 
+        productMode: {
+            type: String,
+            enum: ["main", "intel"],
+            default: "main",
+            required: true,
+            index: true,
+        },
+
+        
+        platform: {
+            type: String,
+            enum: ["shopify", "etsy"],
+            default: "shopify",
+            required: true,
+            index: true,
+        },
+
 
         // ========================================
         // STORE INFORMATION
@@ -200,6 +217,12 @@ const auditSchema = new mongoose.Schema(
         aiProcessingStartedAt: {
             type: Date,
             default: null,
+        },
+
+        aiCompletedAt: {
+            type: Date,
+            default: null,
+            index: true,
         },
 
 
