@@ -104,7 +104,7 @@ const startShopifyDiscovery = async (req, res) => {
         return res.status(201).json({
             success: true,
             message: "Shopify discovery started",
-            discovery
+            data: discovery
         });
 
     } catch (error) {
@@ -150,7 +150,7 @@ const refreshShopifyDiscovery = async (req, res) => {
         return res.json({
             success: true,
             message: "Discovery status retrieved",
-            discovery
+            data: discovery
         });
 
     } catch (error) {
@@ -209,7 +209,7 @@ const getShopifyDiscovery = async (req, res) => {
 
         return res.json({
             success: true,
-            discovery
+            data: discovery
         });
 
     } catch (error) {
