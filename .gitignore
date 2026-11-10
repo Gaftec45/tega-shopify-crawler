@@ -5,3 +5,7 @@ node_modules
 
 npm-debug.log*
 .DS_Store
+
+test-actor1.js
+test-actor3-provider.js
+test-actor3.js

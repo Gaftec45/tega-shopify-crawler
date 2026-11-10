@@ -14,6 +14,7 @@ const publicReportRoutes = require("./routes/public.report.routes");
 const competitorScanRoutes = require("./routes/competitorScan.routes");
 const competitorHistoryRoutes = require("./routes/competitorHistory.routes");
 const competitorDashboardRoutes = require("./routes/competitorDashboard.routes");
+const shopifyFinder = require("./routes/shopifyFinder.routes")
 
 const app = express();
 
@@ -67,6 +68,7 @@ app.use("/api/competitors", competitorScanRoutes);
 app.use("/api/competitors", competitorHistoryRoutes);
 
 app.use("/api/competitors", competitorDashboardRoutes);
+app.use("/api/shopify-finder", shopifyFinder);
 
 // ========================================
 // 404

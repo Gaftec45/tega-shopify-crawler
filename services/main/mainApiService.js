@@ -32,6 +32,7 @@ const mainAPI = axios.create({
     },
 });
 
+
 const reserveAuditCredits = async ({
     userId,
     amount,
@@ -40,51 +41,73 @@ const reserveAuditCredits = async ({
     description,
     metadata = {},
 }) => {
-    const response =
-        await mainAPI.post(
-            "/internal/credits/reserve",
-            {
-                userId,
-                amount,
-                feature,
-                reference,
-                description,
-                metadata,
-            }
-        );
+    const response = await mainAPI.post(
+        "/internal/credits/reserve",
+        {
+            userId,
+            amount,
+            reference,
+            feature,
+            description,
+            metadata,
+        }
+    );
 
     return response.data;
 };
+
+
+const settleAuditCredits = async ({
+    userId,
+    reservationId,
+    actualAmount,
+}) => {
+    const response = await mainAPI.post(
+        "/internal/credits/settle",
+        {
+            userId,
+            reservationId,
+            actualAmount,
+        }
+    );
+
+    return response.data;
+};
+
 
 const commitAuditCredits = async ({
     reservationId,
+    userId,
 }) => {
-    const response =
-        await mainAPI.post(
-            "/internal/credits/commit",
-            {
-                reservationId,
-            }
-        );
+    const response = await mainAPI.post(
+        "/internal/credits/commit",
+        {
+            reservationId,
+            userId,
+        }
+    );
 
     return response.data;
 };
+
 
 const releaseAuditCredits = async ({
     reservationId,
+    userId,
     reason,
 }) => {
-    const response =
-        await mainAPI.post(
-            "/internal/credits/release",
-            {
-                reservationId,
-                reason,
-            }
-        );
+    const response = await mainAPI.post(
+        "/internal/credits/release",
+        {
+            reservationId,
+            userId,
+            reason,
+        }
+    );
 
     return response.data;
 };
+
 
 
 const createLeadFromAudit = async ({
@@ -259,6 +282,7 @@ const checkIntelAnalysisQuota = async (authorization) => {
 
 module.exports = {
     reserveAuditCredits,
+    settleAuditCredits,
     commitAuditCredits,
     releaseAuditCredits,
     createLeadFromAudit,
