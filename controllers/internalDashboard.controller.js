@@ -1,3 +1,4 @@
+
 const mongoose = require("mongoose");
 
 const ShopifyLead = require("../models/ShopifyLead");
@@ -15,31 +16,62 @@ const getDashboardStats = async (req, res) => {
             });
         }
 
+        const objectUserId = new mongoose.Types.ObjectId(userId);
+
         const [
             businesses,
             discoveryRuns,
             totalAudits,
-            completedAudits
+            completedAudits,
+            auditBreakdown
         ] = await Promise.all([
             ShopifyLead.countDocuments({
-                user: userId
+                user: objectUserId
             }),
 
             ShopifyDiscoveryRun.countDocuments({
-                user: userId
+                user: objectUserId
             }),
 
             Audit.countDocuments({
-                user: userId,
+                user: objectUserId,
                 productMode: "main"
             }),
 
             Audit.countDocuments({
-                user: userId,
+                user: objectUserId,
                 productMode: "main",
                 status: "completed"
-            })
+            }),
+
+            Audit.aggregate([
+                {
+                    $match: {
+                        user: objectUserId
+                    }
+                },
+                {
+                    $group: {
+                        _id: {
+                            productMode: {
+                                $ifNull: ["$productMode", "main"]
+                            },
+                            status: "$status"
+                        },
+                        count: {
+                            $sum: 1
+                        }
+                    }
+                }
+            ])
         ]);
+
+        // console.log("INTERNAL DASHBOARD AUDIT STATS:", {
+        //     userId,
+        //     totalAudits,
+        //     completedAudits,
+        //     auditBreakdown
+        // });
 
         return res.status(200).json({
             success: true,
@@ -48,6 +80,7 @@ const getDashboardStats = async (req, res) => {
                     businesses,
                     discoveryRuns
                 },
+
                 audits: {
                     total: totalAudits,
                     completed: completedAudits
@@ -56,7 +89,10 @@ const getDashboardStats = async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Internal dashboard stats error:", error);
+        console.error(
+            "Internal dashboard stats error:",
+            error
+        );
 
         return res.status(500).json({
             success: false,
