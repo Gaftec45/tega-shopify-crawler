@@ -9,6 +9,7 @@ const getDashboardStats = async (req, res) => {
     try {
         const { userId } = req.params;
 
+        // Validate user ID
         if (!mongoose.Types.ObjectId.isValid(userId)) {
             return res.status(400).json({
                 success: false,
@@ -18,12 +19,12 @@ const getDashboardStats = async (req, res) => {
 
         const objectUserId = new mongoose.Types.ObjectId(userId);
 
+        // Fetch dashboard statistics concurrently
         const [
             businesses,
             discoveryRuns,
             totalAudits,
-            completedAudits,
-            auditBreakdown
+            completedAudits
         ] = await Promise.all([
             ShopifyLead.countDocuments({
                 user: objectUserId
@@ -42,36 +43,8 @@ const getDashboardStats = async (req, res) => {
                 user: objectUserId,
                 productMode: "main",
                 status: "completed"
-            }),
-
-            Audit.aggregate([
-                {
-                    $match: {
-                        user: objectUserId
-                    }
-                },
-                {
-                    $group: {
-                        _id: {
-                            productMode: {
-                                $ifNull: ["$productMode", "main"]
-                            },
-                            status: "$status"
-                        },
-                        count: {
-                            $sum: 1
-                        }
-                    }
-                }
-            ])
+            })
         ]);
-
-        // console.log("INTERNAL DASHBOARD AUDIT STATS:", {
-        //     userId,
-        //     totalAudits,
-        //     completedAudits,
-        //     auditBreakdown
-        // });
 
         return res.status(200).json({
             success: true,
